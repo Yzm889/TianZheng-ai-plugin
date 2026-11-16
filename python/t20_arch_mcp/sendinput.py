@@ -1,15 +1,22 @@
 """sendinput.py - real keyboard/mouse delivery via SendInput.
 
-Why this exists: PostMessage(WM_KEYDOWN) gets silently dropped by AutoCAD's
-accelerator tables and by Tianzheng's own message filters, so it cannot drive
-HZQT's interactive prompts. SendInput injects at the driver level, which is what
-an actual user does, and is the only reliable way to answer a Tianzheng command.
+Why this exists: PostMessage(WM_KEYDOWN)/(WM_CHAR) is silently dropped by AutoCAD's
+accelerator tables and by Tianzheng's message filters, so it cannot drive HZQT's
+interactive prompts. SendInput injects at the driver level, which is what an actual
+user does, and is the only reliable way to answer a Tianzheng command.
 
-Safety: callers must focus the target window first; these helpers do that.
+Focus policy (measured the hard way): SendInput reaches only the foreground window.
+This module therefore NEVER pulls AutoCAD in front on its own, because a background
+agent doing that interrupts the user (it once kept jumping in front of a game).
+The caller checks `ensure_focus()` first; when the focus is unavailable the run is
+refused with an explanation instead of silently typing into whatever has focus.
+`post_escape()` is the exception that works without focus: ESC delivered as window
+messages DOES cancel a pending command, so cleanup never disturbs the user.
 """
 from __future__ import annotations
 
 import ctypes
+import os
 import time
 from ctypes import wintypes
 
@@ -57,12 +64,67 @@ class _INPUT(ctypes.Structure):
 
 
 def focus_window(hwnd: int) -> bool:
-    """Bring a window to the foreground (needed before SendInput)."""
+    """Try to bring a window to the foreground WITHOUT stealing it aggressively.
+
+    Windows refuses SetForegroundWindow from a background process. This used to
+    fall back to AttachThreadInput plus a minimise/restore cycle, which made
+    AutoCAD visibly pop up and interrupt whatever the user was doing (measured
+    complaint: it kept jumping in front of a game). That behaviour is gone:
+    unless the caller explicitly allows focus stealing, this never flashes or
+    restores the window -- it only succeeds when Windows lets the plain call
+    through, and otherwise reports False so the caller can ask the user instead.
+    """
     try:
-        user32.ShowWindow(wintypes.HWND(hwnd), 9)  # SW_RESTORE
-        return bool(user32.SetForegroundWindow(wintypes.HWND(hwnd)))
+        if user32.SetForegroundWindow(wintypes.HWND(hwnd)):
+            return True
+    except Exception:
+        pass
+
+    if not allow_focus_steal():
+        # Respect the user's current foreground window.
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    try:
+        fg = user32.GetForegroundWindow()
+        fg_thread = user32.GetWindowThreadProcessId(fg, None)
+        my_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        if fg_thread and fg_thread != my_thread:
+            attached = bool(user32.AttachThreadInput(fg_thread, my_thread, True))
+        try:
+            user32.BringWindowToTop(wintypes.HWND(hwnd))
+            ok = bool(user32.SetForegroundWindow(wintypes.HWND(hwnd)))
+        finally:
+            if attached:
+                user32.AttachThreadInput(fg_thread, my_thread, False)
+        return ok
     except Exception:
         return False
+
+
+def allow_focus_steal() -> bool:
+    """Whether this process may pull AutoCAD in front of the user.
+
+    Off by default: someone running this in the background must not have their
+    screen hijacked. Set T20_ALLOW_FOCUS_STEAL=1 to opt in when the plugin is
+    driven interactively and taking focus is actually wanted.
+    """
+    raw = os.environ.get("T20_ALLOW_FOCUS_STEAL", "").strip().lower()
+    return raw in ("1", "true", "yes", "on")
+
+
+def ensure_focus(hwnd: int, attempts: int = 3, settle: float = 0.35) -> bool:
+    """Focus the window and confirm it really is the foreground window."""
+    for _ in range(max(1, attempts)):
+        focus_window(hwnd)
+        time.sleep(settle)
+        try:
+            if user32.GetForegroundWindow() == hwnd:
+                return True
+        except Exception:
+            pass
+    return False
 
 
 def _send(inputs: list[_INPUT]) -> int:
@@ -156,3 +218,39 @@ def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
         return pt.x, pt.y, pt.x + rect.right, pt.y + rect.bottom
     except Exception:
         return None
+
+
+def descendants(hwnd: int) -> list[int]:
+    """Every descendant window handle of `hwnd`."""
+    out: list[int] = []
+    _EnumProc = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(h, _l):
+        out.append(int(h))
+        return True
+
+    try:
+        user32.EnumChildWindows(wintypes.HWND(hwnd), _EnumProc(cb), 0)
+    except Exception:
+        pass
+    return out
+
+
+def post_escape(hwnd: int, times: int = 2) -> int:
+    """Post ESC to a window and all its descendants -- no focus required.
+
+    MEASURED FALLBACK: SendInput only reaches the window that owns the foreground,
+    and a background agent often cannot change the foreground at all
+    (SetForegroundWindow is refused, AttachThreadInput does not always help). In
+    that situation the command loop can still be cancelled by posting keyboard
+    messages to the drawing view windows; that is what finally unstuck a hung
+    HZQT session here. SendInput is preferred when focus is available because it
+    is what a real user produces.
+    """
+    targets = [int(hwnd)] + descendants(hwnd)
+    for target in targets:
+        for _ in range(max(1, times)):
+            user32.PostMessageW(wintypes.HWND(target), 0x0100, VK_ESCAPE, 0)  # WM_KEYDOWN
+            user32.PostMessageW(wintypes.HWND(target), 0x0101, VK_ESCAPE, 0)  # WM_KEYUP
+            user32.PostMessageW(wintypes.HWND(target), 0x0102, VK_ESCAPE, 0)  # WM_CHAR
+    return len(targets)

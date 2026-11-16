@@ -28,8 +28,18 @@ def _parse_hint(issues: list[dict[str, Any]]) -> str:
 def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
     text = " ".join(
         str(raw.get(k, "") or "")
-        for k in ("error", "diagnosis", "com_error", "detail")
+        for k in ("error", "diagnosis", "com_error", "detail", "note", "last_prompt")
     ).lower()
+    if "焦点" in text or "focus" in text:
+        return (
+            "AutoCAD 窗口没有键盘焦点，交互式坐标送不进去。"
+            "请用鼠标点一下 AutoCAD 的绘图区（或把它切到前台），然后重试。"
+        )
+    if "pc2t20" in text or "转化的图元" in text:
+        return (
+            "天正轴网进入了「PC2T20 选择需要转化的图元」分支，而不是「请选择插入点」分支，"
+            "所以坐标无效。请手动打开天正「绘制轴网」对话框确认轴网数据后再试。"
+        )
     if "refusing" in text or "did not create" in text:
         return "当前图纸不是本服务创建的。先说'新建一个测试图纸'，或设置 T20_ALLOW_FOREIGN_DOC=true。"
     if "unknown command" in text or "未知命令" in text:

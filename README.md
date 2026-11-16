@@ -33,7 +33,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 |---|---|---|---|
 | 墙体 wall | `HZQT` | `TDbWall` | ✅ |
 | 门窗 door / window | `MC` | `TDbOpening` | ✅ |
-| 轴网 axis grid | `HZZW` | 12 axes, `LINE` on `DOTE` | ✅ |
+| 轴网 axis grid | `HZZW` | 12 axes, `LINE` on `DOTE` | ⚠️ 条件性 |
 | 柱子 column | `TGColumn` | `TDbColumn` | ✅ |
 | 楼梯 stair | `TLStair` | `TDbLineStair` | ✅ |
 | 阳台 balcony | `TBalcony` | `TDbBalcony` | ✅ |
@@ -45,6 +45,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 
 | Capability | Why not |
 |---|---|
+| 轴网 `HZZW`（仅“PC2T20”分支时） | 同一命令会走两条分支：`请选择插入点`（可自动）或 `PC2T20 选择需要转化的图元`（要求选取图元，坐标无效）。分支由天正轴网数据状态决定，命令行无法选择 |
 | 楼板 `TSlab` | Needs a boundary/room pick loop; typed points alone created nothing |
 | 轴网标注 `ZWBZ` | Selects axes interactively; no reliable command-line sequence |
 | 房间 `TSPace` | Depends on closed room boundaries |
@@ -193,10 +194,34 @@ writing it shows `对不起，打不开DataStore.dbf文件！` and aborts the co
 `diagnose_environment` detects this and prints the exact `attrib -R` fix; it never
 modifies your installation itself.
 
-### 11. Elevation must match
+### 11. Elevation mismatch blocks COM
 `TGStart.exe` may run AutoCAD elevated. A non-elevated DSH then cannot reach it
 (`0x80070522 请求的操作需要提升`). Launch AutoCAD at the same elevation as DSH —
 a direct `acad.exe` launch from an unelevated shell stays unelevated and works.
+
+### 12. Typed coordinates need the keyboard focus — and the plugin must not steal it
+
+`SendInput` (the only way to answer Tianzheng's interactive prompts) reaches **only
+the foreground window**. Posting `WM_CHAR` to the drawing view is ignored by AutoCAD,
+so there is no focus-free way to type coordinates. (Posting **ESC** as window
+messages *does* work — that is why cancelling a stuck command never disturbs you.)
+
+An earlier version tried to take the foreground itself, including a minimise/restore
+cycle. That made AutoCAD jump in front of whatever the user was doing — it kept
+interrupting a running game. The behaviour is now:
+
+- **Default: never steal focus.** If AutoCAD is not the foreground window, the run
+  is refused with an explicit message telling you to click the drawing area.
+- Opt in with `T20_ALLOW_FOCUS_STEAL=1` when you do want the plugin to take over.
+
+Reading the drawing, counting entities, and cancelling commands never need focus.
+
+### 13. `HZZW` has two branches and only one is automat-able
+The same `HZZW` runs either `请选择插入点` (point input works, grid comes from
+Tianzheng's stored axis data) or `PC2T20 选择需要转化的图元` (it wants you to select
+entities to convert, so typed coordinates do nothing). Which branch you get depends
+on Tianzheng's axis-data state, not on anything the command line can set — so axis
+grid creation is reported as conditional rather than guaranteed.
 
 ---
 
@@ -219,6 +244,7 @@ a direct `acad.exe` launch from an unelevated shell stays unelevated and works.
 | `T20_ARCH_PYTHON` | auto-detected | Python with `pywin32` + `mcp` |
 | `AUTOCAD_ALLOW_NEW_INSTANCE` | `false` | Allow launching AutoCAD when none is running |
 | `T20_ALLOW_FOREIGN_DOC` | `false` | Allow commands on drawings this server did not create |
+| `T20_ALLOW_FOCUS_STEAL` | `false` | Allow the plugin to pull AutoCAD to the foreground. Off by default so a background run never interrupts you |
 | `T20_STATE_DIR` | `%USERPROFILE%` | Where the ownership state file lives |
 
 ---
@@ -262,6 +288,8 @@ dsh-t20-arch/
 | `unknown command` for `HZQT` | Tianzheng ARX not loaded | Start CAD so `tch_kernal.arx` loads; verify with `check_tianzheng_loaded` |
 | Wall created but reported 0 | Wrong verify type | Use `TCH_WALL`; canonical matching handles `TDbWall` |
 | Every COM call rejected | Command pending or dialog open | Press ESC in AutoCAD; the plugin does this automatically |
+| `执行失败` + hint mentions 焦点 / focus | AutoCAD is not the foreground window | Click the AutoCAD drawing area, then retry (or set `T20_ALLOW_FOCUS_STEAL=1`) |
+| `PC2T20 选择需要转化的图元` | Tianzheng routed the axis command to its convert branch | Open 天正「绘制轴网」dialog once, confirm the axis data, then retry |
 
 ---
 

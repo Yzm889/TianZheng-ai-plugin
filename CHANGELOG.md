@@ -4,6 +4,34 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] — 2026-11-17
+
+### Changed
+
+- **The plugin no longer steals the foreground.** It used to call
+  `SetForegroundWindow`, and when that was refused it fell back to a
+  minimise/restore cycle — which made AutoCAD jump in front of whatever the user was
+  doing (in practice: it kept interrupting a running game). Focus is now only
+  attempted when `T20_ALLOW_FOCUS_STEAL=1`; otherwise a run that needs typed
+  coordinates is refused with an explicit "click the drawing area" message instead
+  of typing into an unknown window or hanging.
+- **轴网 `HZZW` reclassified from ✅ to ⚠️ conditional.** The same command takes two
+  branches depending on Tianzheng's axis-data state: `请选择插入点` (works, draws
+  `DOTE` axes) or `PC2T20 选择需要转化的图元` (wants an entity selection; coordinates
+  are ignored). The branch cannot be chosen from the command line, so the earlier
+  "verified" claim was too optimistic and has been corrected in the catalog, README
+  and tests.
+
+### Added
+
+- `sendinput.post_escape()` — cancels a pending command by posting ESC to the window
+  and all descendants. This works **without** the foreground, so recovering a stuck
+  AutoCAD never disturbs the user.
+- `clear_pending()` runs before every command: a half-finished interactive loop from
+  an earlier run makes every later COM call fail with `RPC_E_CALL_REJECTED`, which
+  used to look like "the next command silently did nothing".
+- Specific failure hints for the missing-focus and `PC2T20` cases.
+
 ## [0.3.0] — 2026-11-16
 
 Full capability pass on **T30天正建筑 V2.0 (Build250811)** + **AutoCAD 2022**, all

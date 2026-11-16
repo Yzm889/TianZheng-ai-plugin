@@ -162,10 +162,15 @@ def terminate_active_command(app: Any, pid: int, attempts: int = 3) -> dict[str,
         report["attempts"] = i + 1
         if hwnd:
             try:
-                sendinput.focus_window(hwnd)
-                time.sleep(0.15)
-                sendinput.send_escape(2)
-                report["method"] = "SendInput"
+                # Preferred: a real keystroke, but only if we can hold the focus.
+                if sendinput.ensure_focus(hwnd, attempts=1, settle=0.2):
+                    sendinput.send_escape(2)
+                    report["method"] = "SendInput"
+                else:
+                    # Focus is unavailable (background agent): post the key
+                    # messages straight to the drawing view windows instead.
+                    targets = sendinput.post_escape(hwnd, 2)
+                    report["method"] = f"PostMessage->{targets} windows"
             except Exception:
                 pass
         if not report.get("method"):
@@ -182,6 +187,14 @@ def terminate_active_command(app: Any, pid: int, attempts: int = 3) -> dict[str,
                 return report
         except Exception:
             continue
+
+    # Final attempt: post ESC again before giving up on quiescence.
+    if hwnd:
+        try:
+            sendinput.post_escape(hwnd, 3)
+            time.sleep(1.0)
+        except Exception:
+            pass
 
     try:
         report["quiescent"] = bool(app.GetAcadState().IsQuiescent)
@@ -245,6 +258,34 @@ def _post_text(doc: Any, text: str, attempts: int = 12, delay: float = 0.3) -> N
     raise AcadError(f"PostCommand rejected repeatedly: {last}")
 
 
+def clear_pending(app: Any) -> dict[str, Any]:
+    """Cancel a command left half-finished by a previous run.
+
+    A previous call can leave AutoCAD inside an interactive loop; every later COM
+    call is then rejected and the next command appears to do nothing. Clearing it
+    up front is what makes repeated runs reliable.
+    """
+    report: dict[str, Any] = {"was_busy": None, "cleared": None}
+    try:
+        report["was_busy"] = not app.GetAcadState().IsQuiescent
+    except Exception:
+        return report
+    if not report["was_busy"]:
+        report["cleared"] = True
+        return report
+
+    pid = app_process_id(app)
+    try:
+        report.update(terminate_active_command(app, pid, attempts=2))
+    except Exception as exc:  # noqa: BLE001
+        report["error"] = str(exc)
+    try:
+        report["cleared"] = bool(app.GetAcadState().IsQuiescent)
+    except Exception:
+        report["cleared"] = None
+    return report
+
+
 def _run_with_dialog_impl(
     command: str,
     inputs: list[str],
@@ -256,6 +297,9 @@ def _run_with_dialog_impl(
     verify_layer: str | None = None,
 ) -> dict[str, Any]:
     app = _attach_app()
+    # Clear anything a previous run left hanging BEFORE touching the document:
+    # a pending command makes every document call fail with RPC_E_CALL_REJECTED.
+    clear_pending(app)
     doc = _active_document()
 
     if not is_owned_document(doc) and not allow_foreign_document():
@@ -280,6 +324,39 @@ def _run_with_dialog_impl(
     dialog_report: dict[str, Any] | None = None
     com_error: str | None = None
     sent: list[str] = []
+
+    # The interactive points cannot be delivered without the keyboard focus.
+    #
+    # MEASURED: SendInput only reaches the foreground window, and posting
+    # WM_CHAR to the drawing views is ignored by AutoCAD (posting ESC works, but
+    # characters do not). So if this process cannot take the foreground, typing
+    # would silently do nothing and the command would hang. Fail loudly instead,
+    # because a silent no-op is far harder to diagnose than a clear message.
+    focus_ready = False
+    try:
+        focus_ready = sendinput.ensure_focus(int(app.HWND), attempts=3, settle=0.3)
+    except Exception:
+        focus_ready = False
+
+    if inputs and not focus_ready:
+        result: dict[str, Any] = {
+            "success": False,
+            "command": command,
+            "inputs": inputs,
+            "verify_type": observed,
+            "mode": "dialog" if dialog_title else "stepwise",
+            "focus_available": False,
+            "error": (
+                "AutoCAD 窗口无法获得键盘焦点，交互式输入无法送达。"
+                "请用鼠标点一下 AutoCAD 绘图区（或把它切到前台）后重试。"
+            ),
+            "note": "命令未发送，模型未改动。",
+        }
+        try:
+            result["counts"] = {"before": before_typed, "after": before_typed, "delta": 0}
+        except Exception:
+            pass
+        return result
 
     try:
         _post_text(doc, command.strip() + "\n")
@@ -424,6 +501,9 @@ def _run_impl(
     verify_layer: str | None = None,
 ) -> dict[str, Any]:
     app = _attach_app()
+    # Clear anything a previous run left hanging BEFORE touching the document:
+    # a pending command makes every document call fail with RPC_E_CALL_REJECTED.
+    clear_pending(app)
     doc = _active_document()
 
     if not is_owned_document(doc) and not allow_foreign_document():
