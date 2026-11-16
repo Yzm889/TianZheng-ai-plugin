@@ -7,6 +7,9 @@ to AutoCAD.
 """
 from __future__ import annotations
 
+import os
+import time
+
 from typing import Any, Callable
 
 from . import nl_catalog, nl_parser
@@ -117,6 +120,26 @@ def _wrap(plan: ParseResult, raw: dict[str, Any]) -> dict[str, Any]:
         }]
         out["hint"] = out["errors"][0]["hint"]
     return out
+
+
+def _made_progress(result: dict) -> bool:
+    """True when the backend reported any created/changed entity."""
+    if result.get("success") or result.get("ok"):
+        return True
+    counts = result.get("counts") or {}
+    for key in ("delta", "delta_typed"):
+        try:
+            if int(counts.get(key) or 0) > 0:
+                return True
+        except Exception:
+            pass
+    try:
+        if int(counts.get("model_space_after", 0)) > int(counts.get("model_space_before", 0)):
+            return True
+    except Exception:
+        pass
+    deltas = result.get("type_deltas") or {}
+    return any(isinstance(v, int) and v > 0 for v in deltas.values())
 
 
 def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[str, Any]:
@@ -390,6 +413,28 @@ def execute(
     fn = executor or (lambda p: execute_plan(p, auto_create_drawing=auto_create_drawing))
     try:
         raw = fn(plan)
+        # One safe retry for a drawing command that produced NOTHING.
+        #
+        # MEASURED: individual Tianzheng commands occasionally do nothing
+        # (HZQT dropped one wall segment out of five in the same run, TUpdSpace
+        # failed on a second identical call). Retrying only when the entity count
+        # did not change is safe: a command that already created something is never
+        # repeated, so nothing is drawn twice.  T20_RETRY_ON_FAILURE=0 disables it.
+        if (
+            isinstance(raw, dict)
+            and not raw.get("success", raw.get("ok", True))
+            and not _made_progress(raw)
+            and (executor is None)
+            and os.environ.get("T20_RETRY_ON_FAILURE", "1").strip().lower()
+            not in ("0", "false", "no", "off")
+        ):
+            first_error = raw.get("error") or raw.get("diagnosis") or "no entities created"
+            time.sleep(1.2)
+            retried = fn(plan)
+            if isinstance(retried, dict):
+                retried["retried_after_failure"] = True
+                retried["first_attempt_error"] = str(first_error)[:200]
+            raw = retried
     except Exception as exc:  # noqa: BLE001
         envelope.update({
             "stage": "execute",

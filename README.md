@@ -57,6 +57,74 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 
 ---
 
+## Instruction reference (原子指令)
+
+Every instruction below is **independent and composable** — nothing is a canned
+"generate a whole house" preset. You draw a plan by issuing them in order, exactly
+like a drafter would.
+
+### 轴网 / 标注
+
+| 指令 | 作用 | 生成对象 |
+|---|---|---|
+| `在 0,0 画轴网` | 按天正当前轴网数据生成轴网 | `LINE`（`DOTE` 层） |
+| `轴网标注 0,900 7800,900` | 给首末轴线加轴号与轴间尺寸 | `TDbAxisLabelSet` + `TDbDimension2` |
+| `快速标注 0,-1500` | 选全部对象做外部尺寸 | `TDbDimension2` |
+| `逐点标注 0,0 8000,0 0,-1500` | 两点之间加尺寸 | `TDbDimension2` |
+
+### 墙体（逐段绘制）
+
+| 指令 | 作用 |
+|---|---|
+| `从 0,0 到 8400,0 画一堵墙` | 画一段墙（外墙的一个边） |
+| `从 0,3000 到 8400,3000 画一堵墙` | 画内隔墙；天正会自动把被穿过的外墙切断 |
+| `画墙 0,0 8400,0 8400,6300 0,6300 0,0` | 一次画闭合墙环（末点重复起点 = 自动闭合） |
+
+### 门窗 / 构件
+
+| 指令 | 作用 |
+|---|---|
+| `在 1200,0 开一个宽 1000 高 2100 的门` | 在墙上开门（宽度经对话框设置） |
+| `在 4000,0 开一个宽 1800 的窗` | 在墙上开窗 |
+| `在 0,0 画一根柱子` | 插入天正柱 |
+| `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
+| `画阳台 0,0 2000,0 2000,1000 0,1000` | 画阳台 |
+| `画楼板 0,0 8400,0 8400,6300 0,6300，板厚 120` | 画楼板（可指定板厚） |
+
+### 房间
+
+| 指令 | 作用 |
+|---|---|
+| `搜索房间，标注位置 4200,1500` | 搜索全部封闭区域并标注**名称 + 面积**（一次标注所有房间，不必逐间调用） |
+
+### 文字 / 几何 / 文档
+
+| 指令 | 作用 |
+|---|---|
+| `在 0,-3000 写天正文字 平面图` | 天正文字 |
+| `从 0,-5000 到 5000,-5000 画一条线` / `在 3000,-4000 画半径 800 的圆` | 原生图元 |
+| `统计墙的数量` / `列出所有天正实体` | 查询 |
+| `保存图纸` / `缩放全图` | 文档操作 |
+
+### 组合示例（逐条指令，非预设）
+
+```
+在 0,0 画轴网
+轴网标注 0,900 7800,900
+从 0,0 到 8400,0 画一堵墙
+从 8400,0 到 8400,6300 画一堵墙
+从 8400,6300 到 0,6300 画一堵墙
+从 0,6300 到 0,0 画一堵墙
+从 0,3000 到 8400,3000 画一堵墙        # 内隔墙，天正自动切断外墙
+搜索房间，标注位置 4200,1500           # 两个房间一次标注完
+在 1200,0 开一个宽 1000 高 2100 的门
+在 4000,0 开一个宽 1800 的窗
+快速标注 0,-1500
+```
+
+Measured 8/8: 7 walls (4 exterior segments + the interior wall splitting them),
+2 rooms, 2 openings.
+
 ## Install
 
 Installed from the Git commit (this package is distributed via Git, not npm):
@@ -76,7 +144,7 @@ Then **fully quit and reopen DSH**. Tools appear as `mcp__t20_arch__*`.
 The launcher finds a Python that already has `pywin32` and `mcp`, or builds a private
 venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
 
-### Prerequisites
+## Prerequisites
 
 - **Windows** (COM + Win32 input simulation are Windows-only)
 - **AutoCAD + T20/T30 天正建筑**, started so that Tianzheng's ARX modules are loaded
