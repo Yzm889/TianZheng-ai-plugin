@@ -37,6 +37,8 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | 柱子 column | `TGColumn` | `TDbColumn` | ✅ |
 | 楼梯 stair | `TLStair` | `TDbLineStair` | ✅ |
 | 阳台 balcony | `TBalcony` | `TDbBalcony` | ✅ |
+| 楼板 slab | `TSlab` | `TDbSlab` | ✅ 可指定板厚 |
+| 房间 room | `TUpdSpace` | `TDbSpace` | ✅ 需闭合墙体 |
 | 天正文字 Tianzheng text | `TText` | `TDbText` | ✅ |
 | native line / circle / text | `LINE` `CIRCLE` `TEXT` | AcDb entities | ✅ |
 | query / count / save / zoom / diagnose | — | — | ✅ |
@@ -46,9 +48,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | Capability | Why not |
 |---|---|
 | 轴网 `HZZW`（仅“PC2T20”分支时） | 同一命令会走两条分支：`请选择插入点`（可自动）或 `PC2T20 选择需要转化的图元`（要求选取图元，坐标无效）。分支由天正轴网数据状态决定，命令行无法选择 |
-| 楼板 `TSlab` | Needs a boundary/room pick loop; typed points alone created nothing |
-| 轴网标注 `ZWBZ` | Selects axes interactively; no reliable command-line sequence |
-| 房间 `TSPace` | Depends on closed room boundaries |
+| 轴网标注 `ZWBZ` | 提示 `请选择起始轴线`，只认真天正轴线对象且要轴线上的点；轴网本身不稳定时无法可靠自动化 |
 | 图层管理器 `TCGL` | Pure UI command; creates no entity, so it cannot be verified by count |
 
 ---
@@ -222,6 +222,26 @@ Tianzheng's stored axis data) or `PC2T20 选择需要转化的图元` (it wants 
 entities to convert, so typed coordinates do nothing). Which branch you get depends
 on Tianzheng's axis-data state, not on anything the command line can set — so axis
 grid creation is reported as conditional rather than guaranteed.
+
+### 14. Pick-only commands CAN be automated with selection keywords
+Commands that say "选择…" accept typed selection keywords, so a mouse pick is often
+avoidable:
+
+| Command | Prompt | Typed answer that worked |
+|---|---|---|
+| 楼板 `TSlab` | `选择一封闭的多段线或圆` | **`L`** (last) — create the boundary with COM first, then `L` selects it |
+| 房间 `TUpdSpace` | `请选择构成一完整建筑物的所有墙体` | **`ALL`** |
+
+Measured full chains:
+```
+TSlab      : L → Enter(不可见边) → Enter(洞口) → Enter/厚度
+TUpdSpace  : ALL → Enter → <标注位置点>
+```
+Two traps found this way: `TSPace` **does not exist** (Tianzheng answers "未知命令";
+the real command is `TUpdSpace`), and a wall loop must be closed with the `C` option —
+repeating the first point draws a zero-length segment and leaves the loop open, after
+which `搜索房间` silently finds no area. The parser now turns a repeated final point
+into `C` automatically.
 
 ---
 

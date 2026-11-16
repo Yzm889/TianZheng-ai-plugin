@@ -119,6 +119,52 @@ def _add_text_impl(insertion: Any, text: str, height: float, layer: str | None) 
     return {"ok": True, "handle": str(getattr(entity, "Handle", "")), "object_name": getattr(entity, "ObjectName", "AcDbText")}
 
 
+def draw_closed_polyline(points: Any, layer: str | None = None) -> dict[str, Any]:
+    """Create a closed lightweight polyline from points.
+
+    Needed as the boundary input for Tianzheng's pick-based commands: 楼板 (TSlab)
+    asks for "一封闭的多段线或圆", and a freshly created polyline can then be
+    selected with the typed keyword `L` (last) -- no mouse pick required.
+    """
+    return _com(_draw_closed_polyline_impl, points, layer, timeout=90)
+
+
+def _draw_closed_polyline_impl(points: Any, layer: str | None) -> dict[str, Any]:
+    doc = _active_document()
+    _guard(doc)
+
+    coords: list[float] = []
+    for point in points:
+        x, y, _z = _xyz(point)
+        coords.extend([x, y])
+    if len(coords) < 6:  # fewer than 3 vertices cannot enclose an area
+        raise AcadError("闭合多段线至少需要 3 个点。")
+
+    try:
+        array = win32com.client.VARIANT(
+            pythoncom.VT_ARRAY | pythoncom.VT_R8, tuple(coords)
+        )
+        poly = doc.ModelSpace.AddLightWeightPolyline(array)
+    except Exception as exc:  # noqa: BLE001
+        raise AcadError(f"AddLightWeightPolyline failed: {exc}") from exc
+
+    try:
+        poly.Closed = True
+    except Exception:
+        pass
+    if layer:
+        try:
+            poly.Layer = layer
+        except Exception:
+            pass
+    return {
+        "ok": True,
+        "handle": str(getattr(poly, "Handle", "")),
+        "object_name": getattr(poly, "ObjectName", "AcDbPolyline"),
+        "vertices": len(coords) // 2,
+    }
+
+
 def save_drawing(path: str | None = None) -> dict[str, Any]:
     return _com(_save_impl, path, timeout=180)
 

@@ -4,6 +4,40 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.0] — 2026-11-17
+
+Two more Tianzheng objects become automatable, and the parser stops losing input.
+
+### Added
+
+- **楼板 (slab)** — `TSlab`. The command wants "一封闭的多段线或圆", so the plugin
+  creates a closed polyline through COM and then answers with the typed selection
+  keyword **`L`** (last).板厚 is supported; measured chain:
+  `L → Enter → Enter → 厚度`.
+- **房间 (room)** — `TUpdSpace`. The real command name is `TUpdSpace`: **`TSPace` does
+  not exist** and AutoCAD answers "未知命令". Chain: `ALL → Enter → 标注位置点`.
+- **Generic prompt-template backend** (`tianzheng_custom` + `input_template` +
+  `pre_step`), so a command whose prompts interleave literal keywords with user
+  values is described in the catalog instead of hardcoded in the dispatcher.
+- `native_tools.draw_closed_polyline` — closed boundary creation for pick-based
+  commands.
+
+### Fixed
+
+- **A repeated final point now closes a wall loop.** The point extractor used to
+  de-duplicate, silently swallowing the closing point of
+  `画墙 0,0 8000,0 8000,6000 0,6000 0,0`. The loop stayed open (3 walls instead of 4)
+  and `搜索房间` then found no enclosed area. A repeated point is now translated into
+  Tianzheng's `闭合(C)` option.
+- `板厚` was not a recognised parameter label, so "画楼板 …，板厚 120" silently used
+  the default thickness.
+
+### Verified
+
+12/12 end-to-end on T30天正建筑 V2.0 + AutoCAD 2022 — 墙体(闭合) · 楼板 · 房间 · 柱 ·
+门 · 窗 · 楼梯 · 阳台 · 天正文字 · 线 · 圆 · 统计, producing
+`TDBWALL/TDBSLAB/TDBSPACE/TDBCOLUMN/TDBOPENING/TDBLINESTAIR/TDBBALCONY/TDBTEXT`.
+
 ## [0.3.1] — 2026-11-17
 
 ### Changed

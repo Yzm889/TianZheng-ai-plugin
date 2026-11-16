@@ -198,27 +198,22 @@ class TestRealInstallAlignment(unittest.TestCase):
     """Intents added from the install's real createobjcmd.ini must be recognised."""
 
     def test_extra_object_intents(self):
-        # Measured on T30-Arch V2.0: column, stair and Tianzheng text all create
-        # real Tianzheng objects from typed points, so they are executable now.
-        # Slab still needs a boundary/room pick and stays honestly unsupported.
+        # Measured on T30-Arch V2.0: column, stair, Tianzheng text, slab and room
+        # all create real Tianzheng objects from typed input. 楼板 selects its own
+        # boundary with the `L` keyword; 房间 uses TUpdSpace (TSPace does not exist).
         executable = [
             ("画柱", "draw_column", "TGColumn"),
             ("画楼梯", "draw_stair", "TLStair"),
             ("天正文字", "add_tianzheng_text", "TText"),
+            ("画楼板 0,0 8000,0 8000,6000 0,6000", "draw_slab", "TSlab"),
+            ("搜索房间，标注位置 4000,3000", "draw_room", "TUpdSpace"),
         ]
         for text, intent, command in executable:
             with self.subTest(text=text):
                 plan = nl_parser.parse(text)
                 self.assertEqual(plan.intent, intent)
                 self.assertEqual(plan.command, command)
-                self.assertIn(plan.backend, ("tianzheng", "tianzheng_dialog"))
-
-        with self.subTest(text="画楼板"):
-            plan = nl_parser.parse("画楼板")
-            self.assertEqual(plan.intent, "draw_slab")
-            self.assertEqual(plan.command, "TSlab")
-            self.assertEqual(plan.backend, "unsupported")
-            self.assertTrue(plan.note)
+                self.assertIn(plan.backend, ("tianzheng", "tianzheng_dialog", "tianzheng_custom"))
 
     def test_env_check_reads_root_and_sys(self):
         import stat

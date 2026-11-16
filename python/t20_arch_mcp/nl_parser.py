@@ -26,6 +26,16 @@ _PUNCT = str.maketrans(
 )
 
 
+def _same_point(a: str, b: str, tol: float = 0.5) -> bool:
+    """True when two 'x,y' strings name (almost) the same point."""
+    try:
+        ax, ay = [float(v) for v in str(a).replace(";", ",").split(",")[:2]]
+        bx, by = [float(v) for v in str(b).replace(";", ",").split(",")[:2]]
+    except Exception:
+        return False
+    return abs(ax - bx) <= tol and abs(ay - by) <= tol
+
+
 def normalize_text(text: str) -> str:
     """NFKC + Chinese punctuation -> ASCII, so '（0，0）' parses like '(0,0)'."""
     out = unicodedata.normalize("NFKC", text or "")
@@ -135,6 +145,13 @@ _UNIT_RE = re.compile(
 
 
 def _extract_points(text: str) -> list[tuple[float, float, float]]:
+    """Every point mentioned, in order, PRESERVING a repeated final point.
+
+    A repeated point is meaningful: "画墙 0,0 8000,0 8000,6000 0,6000 0,0" closes
+    the loop, and the parser turns that repeat into Tianzheng's 闭合(C) option.
+    De-duplicating here silently swallowed the closing point (measured: the loop
+    stayed open and 搜索房间 then failed because no area was enclosed).
+    """
     points: list[tuple[float, float, float]] = []
     if re.search(r"原点|零点|坐标原点", text):
         points.append((0.0, 0.0, 0.0))
@@ -142,9 +159,7 @@ def _extract_points(text: str) -> list[tuple[float, float, float]]:
         x = float(match.group(1))
         y = float(match.group(2))
         z = float(match.group(3)) if match.group(3) is not None else 0.0
-        point = (x, y, z)
-        if point not in points:
-            points.append(point)
+        points.append((x, y, z))
     return points
 
 
@@ -165,6 +180,7 @@ _LABEL_WORDS: dict[str, tuple[str, ...]] = {
     "radius": ("半径",),
     "height": ("字高", "文字高度", "高度"),
     "width": ("门宽", "窗宽", "宽度", "宽"),
+    "thickness": ("板厚", "厚度", "板厚度"),
     "x_spacing": ("横向间距", "x间距", "x方向间距", "开间", "间距"),
     "y_spacing": ("纵向间距", "y间距", "y方向间距", "进深"),
     "x_bays": ("横向跨数", "x跨数", "x方向跨数"),
@@ -438,7 +454,7 @@ def parse(text: str) -> ParseResult:
             continue
 
     # Build the exact command-line sequence.  Empty string = press Enter.
-    if spec.backend == "tianzheng":
+    if spec.backend in ("tianzheng", "tianzheng_custom"):
         ordered: list[str] = []
         for pspec in spec.params:
             value = params.get(pspec.name)
@@ -452,7 +468,29 @@ def parse(text: str) -> ParseResult:
                 ordered.append(_fmt_number(value))
             elif pspec.kind == "path":
                 ordered.append(str(value))
-        result.inputs = ordered + [""]
+
+        # Closing a wall loop: Tianzheng has a dedicated 闭合(C) option. If the
+        # caller repeats the first point as the last one, emit C instead of that
+        # duplicate point -- otherwise the wall command draws a zero-length
+        # segment and the loop stays open (measured: 3 walls instead of 4, which
+        # then makes 搜索房间 fail because no area is enclosed).
+        if spec.key == "draw_wall" and len(ordered) >= 4:
+            if _same_point(ordered[0], ordered[-1]):
+                ordered = ordered[:-1] + ["C"]
+
+        if spec.backend == "tianzheng_custom":
+            # Custom chains come from the catalog template; values were collected
+            # above only for validation, so rebuild from the template.
+            templated: list[str] = []
+            for token in spec.input_template:
+                if token.startswith("{") and token.endswith("}"):
+                    val = params.get(token[1:-1])
+                    templated.append("" if val in (None, "") else str(val))
+                else:
+                    templated.append(token)
+            result.inputs = templated
+        else:
+            result.inputs = ordered + [""]
 
     result.params = params
     result.warnings = warnings

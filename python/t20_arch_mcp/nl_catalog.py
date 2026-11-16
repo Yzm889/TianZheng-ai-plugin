@@ -48,6 +48,8 @@ class CommandSpec:
     dialog_title: str | None = None    # native parameter dialog this command opens
     dialog_width_edit: int | None = None  # which visible Edit holds the size, e.g. 2 for 门窗参数
     verify_layer: str | None = None    # count only entities on this layer (e.g. DOTE for axis lines)
+    input_template: tuple[str, ...] = ()  # literal tokens and "{param}" placeholders
+    pre_step: str | None = None        # e.g. "closed_polyline": create geometry before the command
 
 
 _ENTITY_CHOICES: tuple[tuple[str, str], ...] = (
@@ -178,13 +180,42 @@ SPECS: tuple[CommandSpec, ...] = (
     # unverified command-line sequence must never be sent as if it were reliable.
     CommandSpec(
         key="draw_slab",
-        aliases=("画楼板", "画板", "绘制楼板", "楼板", "TSlab"),
-        backend="unsupported",
+        aliases=("画楼板", "画板", "绘制楼板", "楼板", "楼面板", "TSlab"),
+        backend="tianzheng_custom",
         modes=("create",),
         command="TSlab",
         verify_type="TCH_SLAB",
-        example="画楼板",
-        note="TSlab 通过拾取房间边界生成楼板，无法用固定命令行序列可靠驱动。",
+        pre_step="closed_polyline",
+        input_template=("L", "", "", "{thickness}"),
+        params=(
+            ParamSpec("points", "points", hint="楼板边界顶点，至少 3 个，例如 0,0 8000,0 8000,6000 0,6000"),
+            ParamSpec("thickness", "number", required=False, default=None,
+                      hint="板厚，负值表示向下生成；省略则用天正默认 200", unit_hint="mm"),
+        ),
+        example="画楼板 0,0 8000,0 8000,6000 0,6000，板厚 120",
+        note=(
+            "实测：先用边界点生成闭合多段线，再执行 TSlab，"
+            "用选择关键字 L 选中该多段线（无需鼠标拾取），"
+            "两个回车跳过「不可见边」和「洞口」，最后回车或输入板厚。"
+        ),
+    ),
+    CommandSpec(
+        key="draw_room",
+        aliases=("搜索房间", "生成房间", "标记房间", "房间", "面积", "房间面积", "TUpdSpace", "TSPace"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TUpdSpace",
+        verify_type="TCH_SPACE",
+        input_template=("ALL", "", "{label_point}"),
+        params=(
+            ParamSpec("label_point", "point", hint="房间面积标注位置，例如 4000,3000（需落在墙体围合的区域内）"),
+        ),
+        example="搜索房间，标注位置 4000,3000",
+        note=(
+            "实测：TSPace 在天正里不存在（未知命令），真名是 TUpdSpace。"
+            "先用 ALL 选中全部墙体，回车结束选择，再给一个标注位置点即生成房间。"
+            "要求墙体围合成闭合区域，否则该位置不会生成房间。"
+        ),
     ),
     CommandSpec(
         key="draw_stair",

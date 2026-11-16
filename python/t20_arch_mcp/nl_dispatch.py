@@ -54,7 +54,7 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
-    if plan.backend in ("tianzheng", "tianzheng_dialog"):
+    if plan.backend in ("tianzheng", "tianzheng_dialog", "tianzheng_custom"):
         counts = raw.get("counts") or {}
         delta = counts.get("delta")
         detail = f"，{plan.verify_type or '模型实体总数'} +{delta}" if delta else ""
@@ -134,6 +134,60 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             "detail": plan.note,
             "hint": "如需手动调用，可使用 run_tianzheng_command 并配合 probe_command 观察结果。",
         }
+
+    if backend == "tianzheng_custom":
+        # Commands whose prompt chain needs literal tokens (selection keywords like
+        # L / ALL) interleaved with user values. Measured chains live in the
+        # catalog's input_template; a optional pre_step creates geometry first
+        # (楼板 needs a closed polyline it can select with `L`).
+        from . import acad_conn, env_check, native_tools, nl_catalog, tianzheng_runner
+
+        spec = nl_catalog.get_spec(plan.intent or "")
+        verify_layer = spec.verify_layer if spec else None
+        boundary: dict[str, Any] | None = None
+
+        def build_inputs() -> list[str]:
+            out: list[str] = []
+            for token in (spec.input_template if spec else ()):
+                if token.startswith("{") and token.endswith("}"):
+                    value = params.get(token[1:-1])
+                    out.append("" if value in (None, "") else str(value))
+                else:
+                    out.append(token)
+            return out
+
+        def prepare() -> None:
+            nonlocal boundary
+            if spec and spec.pre_step == "closed_polyline":
+                points = params.get("points") or []
+                if len(points) < 3:
+                    raise ValueError("楼板边界至少需要 3 个点。")
+                boundary = native_tools.draw_closed_polyline(points)
+
+        def send_templated() -> dict[str, Any]:
+            prepare()
+            result = tianzheng_runner.run_with_dialog(
+                command=plan.command or "",
+                inputs=build_inputs(),
+                verify_type=plan.verify_type,
+                dialog_title=None,
+                timeout=25.0,
+                settle=1.8,
+                verify_layer=verify_layer,
+            )
+            if boundary:
+                result["boundary"] = boundary
+            return result
+
+        try:
+            return send_templated()
+        except ValueError:
+            raise
+        except Exception as exc:  # noqa: BLE001
+            if not auto_create_drawing or "Refusing" not in str(exc):
+                raise
+            acad_conn.create_test_drawing(env_check.template_for_autocad(None))
+            return send_templated()
 
     if backend == "tianzheng_dialog":
         from . import acad_conn, env_check, nl_catalog, tianzheng_runner
