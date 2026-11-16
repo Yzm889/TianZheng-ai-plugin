@@ -168,6 +168,54 @@ class TestDispatchAndFeedback(unittest.TestCase):
         self.assertIn("纯界面", result["execution"]["error"])
 
 
+class TestRealInstallAlignment(unittest.TestCase):
+    """Intents added from the install's real createobjcmd.ini must be recognised."""
+
+    def test_extra_object_intents(self):
+        cases = [
+            ("画柱", "draw_column", "TGColumn"),
+            ("画楼梯", "draw_stair", "TLStair"),
+            ("画楼板", "draw_slab", "TSlab"),
+            ("天正文字", "add_tianzheng_text", "TText"),
+        ]
+        for text, intent, command in cases:
+            with self.subTest(text=text):
+                plan = nl_parser.parse(text)
+                self.assertEqual(plan.intent, intent)
+                self.assertEqual(plan.command, command)
+                self.assertEqual(plan.backend, "unsupported")
+                self.assertTrue(plan.note)
+
+    def test_env_check_reads_root_and_sys(self):
+        import stat
+        import tempfile
+
+        from t20_arch_mcp import env_check
+
+        with tempfile.TemporaryDirectory() as root:
+            sys_dir = os.path.join(root, "SYS")
+            os.mkdir(sys_dir)
+            root_ds = os.path.join(root, "DataStore.dbf")
+            paths = [
+                root_ds,
+                os.path.join(root, "tchdata.dbf"),
+                os.path.join(sys_dir, "DataStore.dbf"),
+                os.path.join(sys_dir, "tchdata.dbf"),
+            ]
+            for path in paths:
+                with open(path, "wb") as handle:
+                    handle.write(b"x")
+            os.chmod(root_ds, stat.S_IREAD)
+            try:
+                report = env_check.check_writable_files(root)
+                self.assertTrue(report["blocking_issue"])
+                self.assertIn(root_ds, report["readonly_files"])
+                self.assertTrue(any(f["scope"] == "install_root" for f in report["files"]))
+                self.assertTrue(any(f["scope"] == "SYS" for f in report["files"]))
+            finally:
+                os.chmod(root_ds, stat.S_IWRITE | stat.S_IREAD)
+
+
 class TestCatalogConsistency(unittest.TestCase):
     def test_verify_type_is_inferred_from_command(self):
         cases = {"HZQT": "TCH_WALL", "hzqt": "TCH_WALL", "TGWall": "TCH_WALL",

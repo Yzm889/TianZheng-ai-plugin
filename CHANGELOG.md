@@ -21,6 +21,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   full-width punctuation, unit conversion, missing/ambiguous/illegal input,
   dry-run, execution failure hints and catalogue consistency. No AutoCAD or
   pywin32 needed.
+- Command aliases cross-checked against the real install's `SYS\acad.pgp`, and
+  five more object intents (column, slab, stair, balcony, Tianzheng text) added
+  from `SYS\createobjcmd.ini`. They are recognised and reported as unsupported
+  rather than answered with UNKNOWN_INTENT, because their input sequences are
+  interactive and unverified.
 
 ### Fixed
 
@@ -35,6 +40,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Unrelated optional dependencies could break dispatch**: backend imports are
   now lazy and per-branch.
 - `TGWall` / `TOpening`-style English aliases now infer `verify_type` as well.
+- **Environment diagnosis missed the real blocker**: `DataStore.dbf` and
+  `tchdata.dbf` exist at BOTH the Tianzheng install root and under `SYS`, but
+  only `SYS` was checked. On the actual T20 V10 install the root copy of
+  `DataStore.dbf` is read-only, which triggers the modal abort dialog. Both
+  locations are now checked and each remedy command names the exact file.
 
 ### Known limitations
 

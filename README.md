@@ -101,6 +101,11 @@ Representative instructions (all covered by `python/tests/test_nl.py`):
 检查天正是否加载                 → check_tianzheng_loaded
 ```
 
+Common Tianzheng object families (柱 / 楼板 / 楼梯 / 阳台 / 天正文字) are also
+recognised from the install's real `SYS\createobjcmd.ini`, but are explicitly
+reported as unsupported: their creation is interactive and their command-line
+sequences are not verified, so no command is sent on a guess.
+
 Failures return `stage: "parse"` with an error code (`UNKNOWN_INTENT`,
 `AMBIGUOUS_INTENT`, `MISSING_PARAMETER`, `INVALID_NUMBER`, ...) and a Chinese hint,
 or `stage: "execute"` with the raw backend result plus a specific diagnosis

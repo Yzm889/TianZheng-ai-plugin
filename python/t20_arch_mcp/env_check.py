@@ -128,45 +128,54 @@ def _is_readonly(path: str) -> bool:
 
 
 def check_writable_files(root: str) -> dict[str, Any]:
-    """Report which critical Tianzheng data files cannot be written."""
-    sys_dir = os.path.join(root, "SYS")
+    """Report unwritable Tianzheng data files in BOTH the root and SYS folders.
+
+    On a real T20 V10 install the critical DBFs exist twice: at the install root
+    and under SYS.  Checking only SYS (the old behaviour) can declare everything
+    fine while the root copy of DataStore.dbf is read-only - and that is the copy
+    which makes Tianzheng show the modal "打不开DataStore.dbf文件！" dialog and
+    abort HZQT.
+    """
+    locations = (root, os.path.join(root, "SYS"))
     results: list[dict[str, Any]] = []
     problems: list[str] = []
 
     for name in CRITICAL_WRITABLE:
-        path = os.path.join(sys_dir, name)
-        if not os.path.isfile(path):
+        found = False
+        for location in locations:
+            path = os.path.join(location, name)
+            if not os.path.isfile(path):
+                continue
+            found = True
+            writable = not _is_readonly(path)
+            results.append({
+                "file": name,
+                "path": path,
+                "scope": "install_root" if location == root else "SYS",
+                "exists": True,
+                "writable": writable,
+                "size": os.path.getsize(path),
+            })
+            if not writable:
+                problems.append(path)
+        if not found:
             results.append({"file": name, "exists": False})
-            continue
-        writable = not _is_readonly(path)
-        entry = {
-            "file": name,
-            "exists": True,
-            "writable": writable,
-            "size": os.path.getsize(path),
-        }
-        results.append(entry)
-        if not writable:
-            problems.append(path)
 
     return {
         "files": results,
         "readonly_files": problems,
         "blocking_issue": bool(problems),
         "note": (
-            "Tianzheng's installer marks SYS files read-only. When it cannot open "
-            "DataStore.dbf for writing it shows a modal dialog and ABORTS the "
-            "command (HZQT included), which looks like the command silently "
-            "failed. This server will not modify your Tianzheng installation; "
-            "clear the read-only attribute yourself if you want those commands "
-            "to work."
+            "Tianzheng keeps DataStore.dbf / tchdata.dbf at BOTH the install root "
+            "and under SYS. If any copy is read-only, commands such as HZQT show "
+            "a modal '打不开DataStore.dbf文件！' dialog and abort, which looks like "
+            "a silent failure. This server only reports the condition; clearing "
+            "the attribute is your call."
             if problems
-            else "Tianzheng data files are writable."
+            else "Tianzheng data files are writable in all checked locations."
         ),
         "remedy": (
-            [
-                f"attrib -R \"{p}\"" for p in problems
-            ]
+            [f"attrib -R \"{p}\"" for p in problems]
             + [
                 "Then fully restart AutoCAD via TGStart.exe.",
                 "To restore the original state: attrib +R \"<path>\".",
@@ -179,7 +188,7 @@ def check_writable_files(root: str) -> dict[str, Any]:
 
 def diagnose(root: str | None = None) -> dict[str, Any]:
     """Full installation report: roots, version folders, writability, template."""
-    roots = [root] if root and os.path.isdir(root) else find_tianzheng_roots()
+    roots = [os.path.abspath(root)] if root and os.path.isdir(root) else find_tianzheng_roots()
     if not roots:
         return {
             "found": False,
