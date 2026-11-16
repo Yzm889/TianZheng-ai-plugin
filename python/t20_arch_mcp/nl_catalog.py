@@ -256,6 +256,24 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="dim_wall",
+        aliases=("墙厚标注", "标注墙厚", "标墙厚", "TDimWall"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TDimWall",
+        verify_type="TCH_DIMENSION2",
+        input_template=("{p1}", "{p2}"),
+        params=(
+            ParamSpec("p1", "point", hint="墙线上的第一点，例如 0,-500"),
+            ParamSpec("p2", "point", hint="同一面墙上的第二点，例如 0,6800"),
+        ),
+        example="墙厚标注 0,-500 0,6800",
+        note=(
+            "实测：TDimWall → 直线第一点 → 直线第二点，两点之间那段墙会被标注墙厚，"
+            "生成 TDbDimension2（实测 +2）。注意它要的是“两点定墙”，不是选择对象。"
+        ),
+    ),
+    CommandSpec(
         key="dim_quick",
         aliases=("快速标注", "快速尺寸", "尺寸标注", "标注尺寸", "TQuickDim"),
         backend="tianzheng_custom",

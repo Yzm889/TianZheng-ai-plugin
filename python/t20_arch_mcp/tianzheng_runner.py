@@ -273,6 +273,95 @@ def _post_text(doc: Any, text: str, attempts: int = 12, delay: float = 0.3) -> N
     raise AcadError(f"PostCommand rejected repeatedly: {last}")
 
 
+def force_unblock(app: Any | None = None, attempts: int = 3) -> dict[str, Any]:
+    """Hard recovery from the states that make AutoCAD answer RPC_E_CALL_REJECTED.
+
+    MEASURED failure modes, all seen in practice:
+      1. an interactive Tianzheng loop is still live (needs ESC);
+      2. a modal #32770 dialog is open (needs it closed);
+      3. a modal dialog was closed *programmatically*: the command line looks idle
+         but COM stays rejected until a REAL keypress arrives -- posting ESC is not
+         enough, only a genuine SendInput key while AutoCAD is in the foreground.
+    """
+    app = app or _attach_app()
+    hwnd = int(app.HWND)
+    pid = app_process_id(app)
+    report: dict[str, Any] = {"steps": []}
+
+    def quiescent() -> bool:
+        try:
+            return bool(app.GetAcadState().IsQuiescent)
+        except Exception:
+            return False
+
+    if quiescent():
+        report["quiescent"] = True
+        report["steps"].append("already idle")
+        return report
+
+    # 1) posted ESC (no foreground needed)
+    try:
+        report["steps"].append(f"post_escape -> {sendinput.post_escape(hwnd, 2)}")
+    except Exception as exc:  # noqa: BLE001
+        report["steps"].append(f"post_escape failed: {exc}")
+    time.sleep(0.9)
+    if quiescent():
+        report["quiescent"] = True
+        report["method"] = "post_escape"
+        return report
+
+    # 2) close modal dialogs that would swallow every key
+    try:
+        for win in dialog.top_windows(pid):
+            if win["class"] == "#32770" and win["visible"]:
+                dialog.click_button_text_real(win["hwnd"], "取消")
+                time.sleep(0.4)
+                if dialog.dialog_visible(win["hwnd"]):
+                    user32_close(win["hwnd"])
+                report["steps"].append(f"closed dialog {win['title']!r}")
+    except Exception as exc:  # noqa: BLE001
+        report["steps"].append(f"dialog close failed: {exc}")
+
+    # 3) foreground + REAL keypress (the only thing that lifts case 3).
+    #
+    # OFF by default: a desktop-automation helper may bind Esc to its own "stop"
+    # shortcut, so a real ESC here looks to the user like the agent aborting
+    # itself (measured repeatedly). Opt in with T20_ALLOW_REAL_ESCAPE=1 when a
+    # modal dialog has left COM rejected and posting ESC is not enough.
+    import os as _os
+    if _os.environ.get("T20_ALLOW_REAL_ESCAPE", "0").strip().lower() not in ("1", "true", "yes", "on"):
+        report["steps"].append("real ESC skipped (set T20_ALLOW_REAL_ESCAPE=1 to allow)")
+        report["quiescent"] = False
+        report["method"] = "post_only"
+        return report
+
+    for i in range(attempts):
+        try:
+            sendinput.focus_window(hwnd)
+            if sendinput.ensure_focus(hwnd, attempts=2, settle=0.3):
+                sendinput.send_escape(2)
+                report["steps"].append(f"real ESC #{i + 1}")
+        except Exception as exc:  # noqa: BLE001
+            report["steps"].append(f"real ESC failed: {exc}")
+        time.sleep(0.9)
+        if quiescent():
+            report["quiescent"] = True
+            report["method"] = "real_escape"
+            return report
+
+    report["quiescent"] = False
+    report["method"] = "exhausted"
+    return report
+
+
+def user32_close(hwnd: int) -> bool:
+    """Post WM_CLOSE to a window (last-resort dialog dismissal)."""
+    try:
+        return bool(winmsg.user32.PostMessageW(winmsg.wintypes.HWND(hwnd), 0x0010, 0, 0))
+    except Exception:
+        return False
+
+
 def clear_pending(app: Any) -> dict[str, Any]:
     """Cancel a command left half-finished by a previous run.
 
@@ -294,6 +383,14 @@ def clear_pending(app: Any) -> dict[str, Any]:
         report.update(terminate_active_command(app, pid, attempts=2))
     except Exception as exc:  # noqa: BLE001
         report["error"] = str(exc)
+
+    # A programmatically dismissed modal dialog leaves COM rejected even though the
+    # command line looks idle; only force_unblock's real keypress lifts that.
+    try:
+        if not app.GetAcadState().IsQuiescent:
+            report["force_unblock"] = force_unblock(app)
+    except Exception as exc:  # noqa: BLE001
+        report["force_unblock_error"] = str(exc)
     try:
         report["cleared"] = bool(app.GetAcadState().IsQuiescent)
     except Exception:

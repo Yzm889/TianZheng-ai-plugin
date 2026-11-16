@@ -13,6 +13,31 @@ from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
 
+
+def enable_dpi_awareness() -> str:
+    """Declare this process DPI-aware so window rects match SendInput coordinates.
+
+    MEASURED: on a 125% display an unaware process receives virtualised window
+    rectangles. GetWindowRect reported (353,214,991,478) for a drawing view whose
+    real position was (441,267,1239,597) -- exactly 1.25x off -- so clicks computed
+    from those numbers landed ~79 px away from the intended target.
+    """
+    try:
+        shcore = ctypes.WinDLL("shcore", use_last_error=True)
+        if shcore.SetProcessDpiAwareness(2) == 0:  # PER_MONITOR_DPI_AWARE
+            return "per-monitor"
+    except Exception:
+        pass
+    try:
+        if user32.SetProcessDPIAware():
+            return "system"
+    except Exception:
+        pass
+    return "unaware"
+
+
+DPI_MODE = enable_dpi_awareness()
+
 WM_CLOSE = 0x0010
 WM_COMMAND = 0x0111
 WM_KEYDOWN = 0x0100
