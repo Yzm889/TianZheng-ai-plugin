@@ -795,6 +795,108 @@ def _verify_position_impl(world_x: float, world_y: float, timeout: float) -> dic
     return report
 
 
+def set_title_attributes(values: dict[str, str], timeout: float = 30.0) -> dict[str, Any]:
+    """填写图框标题栏: write block attributes of the inserted title frame.
+
+    The A3 title frame is a block reference named $titleblk$… carrying 24 attributes
+    such as 建设单位 / 名称 / 图号 / 图别 / 比例 / 设计 / 审核 / 日期. Objects from
+    ModelSpace come back untyped, so each candidate is CastTo("IAcadBlockReference")
+    before reading its attributes.
+    """
+    return _com(_set_title_attributes_impl, dict(values or {}), float(timeout),
+                timeout=float(timeout) + 60.0)
+
+
+def _set_title_attributes_impl(values: dict[str, str], timeout: float) -> dict[str, Any]:
+    from win32com.client import CastTo
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    blocks = []
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        count = 0
+    for i in range(count):
+        try:
+            ent = doc.ModelSpace.Item(i)
+            if "BLOCK" not in _object_name(ent).upper():
+                continue
+            br = CastTo(ent, "IAcadBlockReference")
+            if br.HasAttributes:
+                blocks.append(br)
+        except Exception:
+            continue
+
+    if not blocks:
+        return {"success": False,
+                "error": "图纸里没有带属性的图框。请先执行：插入 A3 图框 在 <点>"}
+
+    applied: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for br in blocks:
+        try:
+            attrs = br.GetAttributes()
+        except Exception:
+            continue
+        for attr in attrs:
+            try:
+                tag = str(attr.TagString).strip()
+            except Exception:
+                continue
+            if tag not in values:
+                continue
+            wanted = str(values[tag])
+            try:
+                before = str(attr.TextString)
+                attr.TextString = wanted
+                try:
+                    attr.Update()
+                except Exception:
+                    pass
+                applied.append({"tag": tag, "before": before, "after": wanted})
+            except Exception as exc:  # noqa: BLE001
+                skipped.append(f"{tag}: {exc}")
+
+    # verify by reading back
+    verified: list[dict[str, Any]] = []
+    for br in blocks:
+        try:
+            for attr in br.GetAttributes():
+                tag = str(attr.TagString).strip()
+                if tag in values:
+                    verified.append({"tag": tag, "value": str(attr.TextString)})
+        except Exception:
+            continue
+
+    ok = bool(applied) and all(
+        str(v.get("value", "")).strip() == str(values.get(v.get("tag", ""), "")).strip()
+        for v in verified
+    )
+    result: dict[str, Any] = {
+        "success": bool(applied),
+        "verified": ok,
+        "requested": dict(values),
+        "applied": applied,
+        "read_back": verified,
+        "unknown_tags": sorted(set(values) - {a["tag"] for a in applied}),
+        "document": _safe_doc_name(doc),
+    }
+    if not applied:
+        result["error"] = "没有匹配到任何图框属性标签。"
+        result["hint"] = (
+            "可用标签包括：建设单位、名称、子项名称、工程编号、图号、图别、比例、"
+            "日期、设计、制图、校对、审核、审定、专业负责人、方案设计人、建筑……"
+        )
+    elif not ok:
+        result["error"] = "写入后读回的值与期望不一致。"
+    if skipped:
+        result["warnings"] = skipped
+    return result
+
+
 def insert_title_frame(size: str = "A3", insertion: str | None = None,
                        timeout: float = 40.0) -> dict[str, Any]:
     """插入图框 (TTitleFrame) by driving its native 插入图框 dialog.

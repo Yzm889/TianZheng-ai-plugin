@@ -63,6 +63,14 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "title_info":
+        if not success:
+            return f"填写图框失败：{raw.get('error') or '未写入任何属性'}。"
+        applied = raw.get("applied") or []
+        unique = list(dict.fromkeys(a["tag"] for a in applied))
+        tags = "、".join(unique)
+        note = "（已读回校验）" if raw.get("verified") else "（读回不一致）"
+        return f"已填写图框 {len(unique)} 个字段：{tags}{note}。"
     if plan.backend == "probe_position":
         if not success:
             return f"定位自检失败：{raw.get('error') or '未取得落点'}。"
@@ -225,6 +233,27 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "title_info":
+        import re as _re
+
+        from . import tianzheng_runner
+
+        text = plan.parse_input if hasattr(plan, "parse_input") else ""
+        if not text:
+            text = (plan.to_dict().get("normalized") or "") if hasattr(plan, "to_dict") else ""
+        pairs = {}
+        for match in _re.finditer(r"([^\s=]+)=([^=]+?)(?=\s+[^\s=]+=|\s*$)", text or ""):
+            key = match.group(1).strip()
+            value = match.group(2).strip()
+            if key and value:
+                pairs[key] = value
+        if not pairs:
+            return {"ok": False,
+                    "error": "没有识别到 标签=值。示例：填写图框 名称=阳光小区 图号=建施-05"}
+        report = tianzheng_runner.set_title_attributes(pairs)
+        report["ok"] = bool(report.get("success"))
+        return report
 
     if backend == "dialog_command":
         from . import nl_catalog, tianzheng_runner

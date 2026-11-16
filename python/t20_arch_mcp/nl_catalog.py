@@ -218,7 +218,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="insert_title",
-        aliases=("插入图框", "图框", "加图框", "标题栏", "TTitleFrame"),
+        aliases=("插入图框", "加图框", "图框", "标题栏", "TTitleFrame"),
         backend="tianzheng_title",
         modes=("create",),
         command="TTitleFrame",
@@ -383,6 +383,21 @@ SPECS: tuple[CommandSpec, ...] = (
             "生成 TDbMText。"
         ),
         dialog_title="多行文字",
+    ),
+    CommandSpec(
+        key="title_info",
+        aliases=("填写图框", "图框信息", "改图框", "填写标题栏", "改标题栏", "TitleInfo"),
+        backend="title_info",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="填写图框 名称=阳光小区1号楼 图号=建施-05 比例=1:100",
+        note=(
+            "实测可用：直接写图框块参照的属性。可用标签：建设单位、合作单位、名称、"
+            "子项名称、工程编号、图号、图别、比例、日期、设计、制图、校对、审核、审定、"
+            "专业负责人、方案设计人、建筑、结构、给排水、暖通、电气。"
+            "写法为 标签=值，用空格分隔多个。"
+        ),
     ),
     CommandSpec(
         key="probe_position",
