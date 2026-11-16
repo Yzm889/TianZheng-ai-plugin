@@ -15,7 +15,7 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Yzm889/tianzheng-ai-plugin"
+Homepage = "https://github.com/Yzm889/TianZheng-ai-plugin"
 
 [project.scripts]
 t20-arch-mcp = "t20_arch_mcp.server:main"

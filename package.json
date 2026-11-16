@@ -33,12 +33,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Yzm889/tianzheng-ai-plugin.git"
+    "url": "git+https://github.com/Yzm889/TianZheng-ai-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/Yzm889/tianzheng-ai-plugin/issues"
+    "url": "https://github.com/Yzm889/TianZheng-ai-plugin/issues"
   },
-  "homepage": "https://github.com/Yzm889/tianzheng-ai-plugin#readme",
+  "homepage": "https://github.com/Yzm889/TianZheng-ai-plugin#readme",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
