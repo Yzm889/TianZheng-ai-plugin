@@ -84,8 +84,11 @@ like a drafter would.
 
 | 指令 | 作用 |
 |---|---|
-| `在 1200,0 开一个宽 1000 高 2100 的门` | 在墙上开门（宽度经对话框设置） |
-| `在 4000,0 开一个宽 1800 的窗` | 在墙上开窗 |
+| `在 1200,0 开一个宽 1000 高 2100 的门` | 在墙上开门（宽度/高度经对话框设置） |
+| `在 3000,0 开一个门槛高 100 的门` | 门/窗可分别指定 宽 / 高 / 门槛(台)高 |
+| `在 4000,0 开一个宽 1800 高 1500 的窗` | 在墙上开窗 |
+| `门窗表 在 0,-3000` | 生成门窗明细表（需已有门窗） |
+| `插入 A3 图框 在 -2000,-12000` | 插入图框（A0~A4 可选） |
 | `在 0,0 画一根柱子` | 插入天正柱 |
 | `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
 | `画阳台 0,0 2000,0 2000,1000 0,1000` | 画阳台 |
@@ -354,7 +357,26 @@ TSlab      : L → Enter(不可见边) → Enter(洞口) → Enter/厚度
 TUpdSpace  : ALL → Enter → <标注位置点>
 ```
 
-### 20. Tianzheng prompts may only render once input arrives
+### 20. Tianzheng dialogs ignore BM_CLICK — clicks must be REAL mouse input
+`插入图框` is a plain Win32 `#32770` dialog, yet `WM_COMMAND` and `BM_CLICK` on its
+**插入** button did nothing — the dialog just sat there. It only advanced when a human
+clicked it. So dialog buttons are now clicked with a genuine `SendInput` mouse click at
+the button's screen position (which needs the dialog in the foreground). Reading and
+writing edit fields with `WM_SETTEXT`/`WM_GETTEXT` still works fine; it is only button
+activation that needs real input.
+
+### 21. `TTitleFrame` writes its frame after the dialog closes
+The frame arrives as a block reference plus polylines, and AutoCAD keeps building it for
+a moment after 插入. Measuring immediately reported "0 created" for a frame that did
+appear, so the entity count is now polled until it grows.
+
+### 22. A programmatically closed modal dialog can leave COM rejected
+After a modal Tianzheng dialog is dismissed by messages instead of user input, AutoCAD
+may keep rejecting COM (`RPC_E_CALL_REJECTED`) even though the command line looks idle.
+Only a **real** keypress released it — posting ESC was not enough; with AutoCAD in the
+foreground a real ESC worked instantly. Keep that in mind when a run seems hung.
+
+### 23. Tianzheng prompts may only render once input arrives
 Waiting for a prompt like `请选择起始轴线` can deadlock: measured, ZWBZ printed its
 prompt **only after** a key was sent (the prompt appeared immediately before the ESC
 cancelled it). AutoCAD buffers command-line input, so the reliable pattern is

@@ -178,14 +178,20 @@ def _number_with_unit(raw: str, unit: str | None) -> float:
 
 _LABEL_WORDS: dict[str, tuple[str, ...]] = {
     "radius": ("半径",),
-    "height": ("字高", "文字高度", "高度"),
+    # Bare 高 is a fallback only: it must not swallow 门槛高 / 窗台高 / 文字高度,
+    # which name different parameters ("门槛高 100" was read as a door height).
+    "height": ("字高", "文字高度", "窗高", "门高", "高度", "高"),
     "width": ("门宽", "窗宽", "宽度", "宽"),
+    "sill": ("窗台高", "门槛高", "门槛", "窗台", "台高"),
     "thickness": ("板厚", "厚度", "板厚度"),
     "x_spacing": ("横向间距", "x间距", "x方向间距", "开间", "间距"),
     "y_spacing": ("纵向间距", "y间距", "y方向间距", "进深"),
     "x_bays": ("横向跨数", "x跨数", "x方向跨数"),
     "y_bays": ("纵向跨数", "y跨数", "y方向跨数"),
 }
+
+
+_HEIGHT_DISQUALIFIERS = ("门槛", "窗台", "台", "文字", "字", "栏", "踏步")
 
 
 def _labelled_number(text: str, field_name: str) -> float | None:
@@ -195,8 +201,12 @@ def _labelled_number(text: str, field_name: str) -> float | None:
             re.escape(word) + r"\s*(?:是|为|[:=])?\s*(" + _NUM + r")\s*" + _UNIT_RE.pattern,
             re.IGNORECASE,
         )
-        match = pattern.search(text)
-        if match:
+        for match in pattern.finditer(text):
+            if field_name == "height" and word == "高":
+                # "门槛高 100" / "窗台高 900" name the sill, not the height.
+                before = text[: match.start()]
+                if any(before.endswith(tag) for tag in _HEIGHT_DISQUALIFIERS):
+                    continue
             return _number_with_unit(match.group(1), match.group(2))
     return None
 
@@ -364,6 +374,9 @@ def parse(text: str) -> ParseResult:
                     points = points[1:]  # consume left-to-right for multi-point specs
             elif "原点" in norm:
                 params[name] = "0,0"
+            elif not getattr(pspec, "required", True):
+                # optional point: leave it to the backend default
+                continue
             else:
                 result.issues.append(Issue(
                     "MISSING_PARAMETER", "缺少 '" + name + "' 的坐标。",
@@ -420,6 +433,13 @@ def parse(text: str) -> ParseResult:
             if name == "layer":
                 match = _LAYER_RE.search(norm)
                 value = match.group(1) if match else pspec.default
+            if value is None and pspec.choices:
+                # Sheet sizes and similar enumerations: pick the stated one,
+                # e.g. "插入 A1 图框" must use A1 rather than the A3 default.
+                for choice in pspec.choices:
+                    if re.search(re.escape(str(choice)), norm, re.IGNORECASE):
+                        value = str(choice)
+                        break
             if value is None and pspec.default is not None:
                 value = pspec.default
             if value is None:

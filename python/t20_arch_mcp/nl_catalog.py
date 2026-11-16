@@ -139,12 +139,18 @@ SPECS: tuple[CommandSpec, ...] = (
         verify_type="TCH_OPENING",
         params=(
             ParamSpec("insertion", "point", hint="插入点，例如 1000,0（会吸附到最近的墙）"),
-            ParamSpec("width", "number", hint="门宽，例如 900", minimum=1, unit_hint="mm"),
+            ParamSpec("width", "number", required=False, hint="门宽，例如 900（省略则用对话框当前值）", minimum=1, unit_hint="mm"),
+            ParamSpec("height", "number", required=False, hint="门高，例如 2100", minimum=1, unit_hint="mm"),
+            ParamSpec("sill", "number", required=False, hint="门槛高，例如 0", minimum=0, unit_hint="mm"),
         ),
-        example="在 1000,0 开一个宽 900 的门",
+        example="在 1000,0 开一个宽 900 高 2100 的门",
         dialog_title="门窗参数",
         dialog_width_edit=2,
-        note="实测流程：MC → 门窗参数对话框（设为门宽）→ 点取门窗插入位置 → 输入坐标（吸附到墙）。",
+        note=(
+            "实测流程：MC → 门窗参数对话框 → 点取门窗插入位置 → 输入坐标（吸附到墙）。"
+            "对话框可见输入框顺序为 0=编号 1=门高 2=门宽 3=门槛高 4=距离 5=个数，"
+            "因此宽/高/门槛分别写入 2/1/3。"
+        ),
     ),
     CommandSpec(
         key="draw_window",
@@ -155,12 +161,17 @@ SPECS: tuple[CommandSpec, ...] = (
         verify_type="TCH_OPENING",
         params=(
             ParamSpec("insertion", "point", hint="插入点，例如 3000,0（会吸附到最近的墙）"),
-            ParamSpec("width", "number", hint="窗宽，例如 1500", minimum=1, unit_hint="mm"),
+            ParamSpec("width", "number", required=False, hint="窗宽，例如 1500（省略则用对话框当前值）", minimum=1, unit_hint="mm"),
+            ParamSpec("height", "number", required=False, hint="窗高，例如 1500", minimum=1, unit_hint="mm"),
+            ParamSpec("sill", "number", required=False, hint="窗台高，例如 900", minimum=0, unit_hint="mm"),
         ),
-        example="在 3000,0 开一个宽 1500 的窗",
+        example="在 3000,0 开一个宽 1500 高 1500 的窗",
         dialog_title="门窗参数",
         dialog_width_edit=2,
-        note="门窗共用 MC 命令与同一个参数对话框；窗宽同样在第 3 个输入框。",
+        note=(
+            "门窗共用 MC 命令与同一个参数对话框；窗宽/窗高/窗台高同样写入第 3/2/4 个输入框"
+            "（0=编号 1=高 2=宽 3=门槛/台高 4=距离 5=个数）。"
+        ),
     ),
     # Additional object families confirmed in the real install's
     # SYS\createobjcmd.ini.  Their creation is interactive (points/picks), so an
@@ -203,6 +214,45 @@ SPECS: tuple[CommandSpec, ...] = (
             "(必要时)是否该对象[Y]→ 跳过排除轴线 → 回车结束 的顺序输入，"
             "会先生成 TDbAxisLabelSet(轴号) 再生成 TDbDimension2(轴间尺寸)。"
             "天正的提示要等有输入才渲染，所以这里用固定节奏输入而不是等提示；两个点必须落在真实轴线上。"
+        ),
+    ),
+    CommandSpec(
+        key="insert_title",
+        aliases=("插入图框", "图框", "加图框", "标题栏", "TTitleFrame"),
+        backend="tianzheng_title",
+        modes=("create",),
+        command="TTitleFrame",
+        verify_type=None,
+        params=(
+            ParamSpec("size", "text", required=False, default="A3",
+                      choices=("A0", "A1", "A2", "A3", "A4"),
+                      hint="图幅，例如 A3"),
+            ParamSpec("insertion", "point", required=False,
+                      hint="图框左下角插入点，例如 0,-9000"),
+        ),
+        example="插入 A3 图框 在 0,-9000",
+        note=(
+            "实测：「插入图框」是标准 Win32 对话框，含宽/高/比例三个输入框、"
+            "A0/A1/A2/A3/A4 图幅按钮与 插入/取消 按钮，可用窗口消息驱动。"
+            "指令会点选图幅按钮、点插入，再给出插入点。"
+        ),
+    ),
+    CommandSpec(
+        key="stat_opening",
+        aliases=("门窗表", "门窗明细", "TStatOp"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TStatOp",
+        verify_type="TCH_SHEET",
+        input_template=("ALL", "", "{insertion}"),
+        params=(
+            ParamSpec("insertion", "point", required=False,
+                      hint="表格插入点，例如 0,-3000"),
+        ),
+        example="门窗表 在 0,-3000",
+        note=(
+            "实测：TStatOp → ALL(选全部门窗) → 回车 → 表格插入点，生成 TDbSheet(门窗表)。"
+            "需要图纸里已有门窗对象。"
         ),
     ),
     CommandSpec(

@@ -43,6 +43,8 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "TCH_AXIS_LABEL": ("TCH_AXIS_LABEL", "TDBAXISLABELSET", "TDbAxisLabelSet"),
     # Dimensions created by ZWBZ come back as TDbDimension2.
     "TCH_DIMENSION2": ("TCH_DIMENSION2", "TDBDIMENSION2", "TDbDimension2"),
+    # Tables/schedules (门窗表, 图纸目录) are TDbSheet.
+    "TCH_SHEET": ("TCH_SHEET", "TDBSHEET", "TDbSheet"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is

@@ -123,6 +123,81 @@ def click_button(hwnd: int) -> bool:
     return bool(user32.SendMessageW(wintypes.HWND(hwnd), BM_CLICK, 0, 0))
 
 
+def find_button(dlg_hwnd: int, text: str) -> dict[str, Any] | None:
+    """Find a visible button whose caption contains `text` (case-insensitive)."""
+    wanted = (text or "").strip().lower()
+    for ctrl in child_controls(dlg_hwnd):
+        if ctrl["class"] != "Button" or not ctrl["visible"]:
+            continue
+        if wanted and wanted in (ctrl["text"] or "").strip().lower():
+            return ctrl
+    return None
+
+
+def click_button_text(dlg_hwnd: int, text: str) -> bool:
+    """Click a button by its caption, e.g. 插入 / A3 / 确定."""
+    ctrl = find_button(dlg_hwnd, text)
+    if not ctrl:
+        return False
+    return click_button(ctrl["hwnd"])
+
+
+def window_center(hwnd: int) -> tuple[int, int] | None:
+    """Screen coordinates of a control's centre."""
+    try:
+        rect = wintypes.RECT()
+        user32.GetWindowRect(wintypes.HWND(hwnd), ctypes.byref(rect))
+        if rect.right <= rect.left or rect.bottom <= rect.top:
+            return None
+        return ((rect.left + rect.right) // 2, (rect.top + rect.bottom) // 2)
+    except Exception:
+        return None
+
+
+def click_button_text_real(
+    dlg_hwnd: int,
+    text: str,
+    verify_dialog_closes: bool = False,
+    wait: float = 1.5,
+) -> dict[str, Any]:
+    """Click a dialog button with a REAL mouse click.
+
+    MEASURED: the 插入 button of Tianzheng's 插入图框 dialog ignored both
+    WM_COMMAND and BM_CLICK -- the dialog just sat there until a human clicked it.
+    Tianzheng's custom controls do not expose a usable automation interface, so the
+    reliable way is a genuine SendInput click on the button's screen position
+    (which also requires the dialog to be in the foreground).
+    """
+    ctrl = find_button(dlg_hwnd, text)
+    if not ctrl:
+        return {"clicked": False, "reason": f"找不到按钮 {text!r}"}
+
+    center = window_center(ctrl["hwnd"])
+    if not center:
+        return {"clicked": False, "reason": "按钮没有可见矩形"}
+
+    from . import sendinput  # local import: avoids a cycle at module load
+
+    sendinput.click(center[0], center[1], settle=0.35)
+    closed = not bool(user32.IsWindowVisible(wintypes.HWND(dlg_hwnd)))
+    if verify_dialog_closes and not closed:
+        time.sleep(wait)
+        closed = not bool(user32.IsWindowVisible(wintypes.HWND(dlg_hwnd)))
+    return {
+        "clicked": True,
+        "button": ctrl["text"] or text,
+        "at": center,
+        "dialog_closed": closed,
+    }
+
+
+def dialog_visible(hwnd: int) -> bool:
+    try:
+        return bool(user32.IsWindowVisible(wintypes.HWND(hwnd)))
+    except Exception:
+        return False
+
+
 def send_command(hwnd: int, ctrl_id: int) -> bool:
     return bool(user32.SendMessageW(wintypes.HWND(hwnd), WM_COMMAND, ctrl_id, 0))
 

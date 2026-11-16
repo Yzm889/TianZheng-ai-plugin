@@ -57,6 +57,13 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
+    if plan.backend == "tianzheng_title":
+        size = raw.get("size") or plan.params.get("size") or "A3"
+        if not success:
+            return f"插入 {size} 图框失败：{raw.get('error') or '未生成图框'}。"
+        deltas = raw.get("type_deltas") or {}
+        detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "无实体变化"
+        return f"已插入 {size} 图框（{detail}）。"
     if plan.backend in ("tianzheng", "tianzheng_dialog", "tianzheng_custom", "tianzheng_annotate"):
         counts = raw.get("counts") or {}
         delta = counts.get("delta")
@@ -158,6 +165,13 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             "hint": "如需手动调用，可使用 run_tianzheng_command 并配合 probe_command 观察结果。",
         }
 
+    if backend == "tianzheng_title":
+        from . import tianzheng_runner
+
+        size = str(params.get("size") or "A3")
+        insertion_point = params.get("insertion")
+        return tianzheng_runner.insert_title_frame(size, insertion_point)
+
     if backend == "tianzheng_annotate":
         # Prompt-driven commands: the Y/N confirmation appears only sometimes, so
         # a fixed input list is wrong by construction. The runner reads the real
@@ -243,8 +257,14 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
 
         spec = nl_catalog.get_spec(plan.intent or "")
         edits: dict[int, Any] = {}
-        if spec and spec.dialog_width_edit is not None and "width" in params:
-            edits[spec.dialog_width_edit] = params["width"]
+        if spec and spec.dialog_width_edit is not None:
+            # 门窗参数 visible-edit order: 0=编号 1=高 2=宽 3=门槛/台高 4=距离 5=个数
+            if "width" in params:
+                edits[spec.dialog_width_edit] = params["width"]
+            if "height" in params:
+                edits[1] = params["height"]
+            if "sill" in params:
+                edits[3] = params["sill"]
 
         insertion = params.get("insertion")
         inputs = [insertion, ""] if insertion else [""]

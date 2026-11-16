@@ -512,6 +512,132 @@ def _run_with_dialog_impl(
     return result
 
 
+def insert_title_frame(size: str = "A3", insertion: str | None = None,
+                       timeout: float = 40.0) -> dict[str, Any]:
+    """插入图框 (TTitleFrame) by driving its native 插入图框 dialog.
+
+    MEASURED: TTitleFrame opens a real Win32 dialog titled 插入图框 with three
+    edits (width / height / ratio, e.g. 1189 / 841 / 100), a set of sheet-size
+    buttons (A0, A1, A2, A3, A4 ...) and 插入 / 取消. Because it is a plain #32770
+    it can be driven with window messages: click the size button, click 插入, then
+    give the insertion point.
+    """
+    return _com(_insert_title_frame_impl, str(size or "A3"),
+                None if insertion is None else str(insertion),
+                float(timeout), timeout=float(timeout) + 60.0)
+
+
+def _insert_title_frame_impl(size: str, insertion: str | None, timeout: float) -> dict[str, Any]:
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    if not is_owned_document(doc) and not allow_foreign_document():
+        raise AcadError(
+            "Refusing to send commands to "
+            f"'{doc_name(doc, '?')}' because this server did not create it."
+        )
+
+    pid = app_process_id(app)
+    if not pid:
+        raise AcadError("Cannot resolve the AutoCAD process id.")
+
+    before_hist = _histogram(doc)
+    before_total = sum(before_hist.values())
+    steps: list[str] = []
+    started = time.time()
+
+    try:
+        sendinput.focus_drawing_view(int(app.HWND))
+        sendinput.ensure_focus(int(app.HWND), attempts=2)
+        mark = winmsg.command_output_size(pid)
+        _post_text(doc, "TTitleFrame\n")
+        winmsg.wait_for_output(pid, mark, timeout=6.0, settle=0.4)
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "command": "TTitleFrame",
+                "error": f"cannot start TTitleFrame: {exc}", "steps": steps}
+
+    dlg = dialog.wait_for_dialog(pid, "插入图框", timeout=min(timeout, 15.0))
+    if not dlg:
+        return {
+            "success": False,
+            "command": "TTitleFrame",
+            "error": "未出现「插入图框」对话框。",
+            "steps": steps,
+        }
+    steps.append(f"dialog {dlg['title']!r} hwnd={dlg['hwnd']}")
+
+    # Tianzheng's controls ignore WM_COMMAND/BM_CLICK, so every click here is a
+    # real SendInput click on the control's screen position. The dialog must be in
+    # the foreground, which the focus call above arranges.
+    if size:
+        picked = dialog.click_button_text_real(dlg["hwnd"], size)
+        steps.append(f"real-click size {size!r} -> {picked}")
+        time.sleep(0.6)
+
+    inserted = dialog.click_button_text_real(dlg["hwnd"], "插入", verify_dialog_closes=True)
+    steps.append(f"real-click 插入 -> {inserted}")
+    if not inserted.get("clicked"):
+        # fall back to the message-based click, which works for plain Win32 dialogs
+        fallback = dialog.click_button_text(dlg["hwnd"], "插入")
+        steps.append(f"BM_CLICK fallback 插入 -> {fallback}")
+    time.sleep(1.2)
+
+    if dialog.dialog_visible(dlg["hwnd"]):
+        return {
+            "success": False,
+            "command": "TTitleFrame",
+            "size": size,
+            "error": "「插入图框」对话框没有关闭，图框未插入（按钮点击未生效）。",
+            "steps": steps,
+        }
+
+    # insertion point (default: below the origin)
+    point = insertion if insertion else "0,-9000"
+    try:
+        sendinput.type_into_window(int(app.HWND), point, enter=True)
+        steps.append(f"insertion {point!r}")
+        time.sleep(1.5)
+    except Exception as exc:  # noqa: BLE001
+        steps.append(f"insertion failed: {exc}")
+
+    terminate_active_command(app, pid)
+
+    # The frame arrives as a block reference plus its polylines, and AutoCAD keeps
+    # building it for a moment after the dialog closes -- measuring immediately
+    # reported "0 created" for a frame that did appear. Poll until it grows.
+    after_hist = before_hist
+    after_total = before_total
+    for _ in range(10):
+        time.sleep(0.6)
+        try:
+            after_hist = _histogram(doc)
+        except Exception:
+            continue
+        after_total = sum(after_hist.values())
+        if after_total > before_total:
+            break
+    delta = after_total - before_total
+    result: dict[str, Any] = {
+        "success": delta > 0,
+        "command": "TTitleFrame",
+        "size": size,
+        "insertion": point,
+        "counts": {"before": before_total, "after": after_total, "delta": delta},
+        "type_deltas": {
+            k: after_hist.get(k, 0) - before_hist.get(k, 0)
+            for k in set(before_hist) | set(after_hist)
+            if after_hist.get(k, 0) - before_hist.get(k, 0)
+        },
+        "steps": steps,
+        "elapsed_seconds": round(time.time() - started, 2),
+        "document": _safe_doc_name(doc),
+    }
+    if not result["success"]:
+        result["diagnosis"] = "图框未生成；请查看 steps 中每一步的执行结果与对话框按钮文本。"
+    return result
+
+
 def annotate_axis(start_point: str, end_point: str, timeout: float = 30.0) -> dict[str, Any]:
     """轴网标注 (ZWBZ) driven by the *actual prompts* rather than a fixed script.
 
