@@ -80,17 +80,6 @@ def windows_for_pid(pid: int) -> list[dict]:
     return out
 
 
-def find_windows(pid: int, title_contains: str | None = None, window_class: str | None = None) -> list[dict]:
-    result = []
-    for win in windows_for_pid(pid):
-        if title_contains and title_contains.lower() not in win["title"].lower():
-            continue
-        if window_class and win["class"] != window_class:
-            continue
-        result.append(win)
-    return result
-
-
 def post_message(hwnd: int, msg: int, wparam: int = 0, lparam: int = 0) -> bool:
     return bool(user32.PostMessageW(wintypes.HWND(hwnd), msg, wparam, lparam))
 
@@ -226,23 +215,6 @@ def command_tail(pid: int, chars: int = 200) -> str:
         return text[-chars:] if chars > 0 else text
     except Exception:
         return ""
-
-
-def wait_for_text(
-    pid: int,
-    needles: tuple[str, ...],
-    timeout: float = 8.0,
-    poll: float = 0.15,
-) -> str | None:
-    """Wait until one of `needles` appears in the command tail; return it."""
-    deadline = time.time() + timeout
-    while time.time() < deadline:
-        tail = command_tail(pid, 400)
-        for needle in needles:
-            if needle in tail:
-                return needle
-        time.sleep(poll)
-    return None
 
 
 def wait_for_output(

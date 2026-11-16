@@ -256,6 +256,65 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="wall_thickness_unsupported",
+        aliases=("改墙厚", "修改墙厚", "设置墙厚", "墙厚改为", "改外墙厚", "设置外墙厚", "TWallThick", "TExtThick"),
+        backend="unsupported",
+        modes=("modify",),
+        command="TWallThick",
+        verify_type=None,
+        example="（暂无）",
+        note="该功能太难实现，暂不提供。需要改墙厚请在天正界面里手动操作。",
+    ),
+    CommandSpec(
+        key="annotate_elevation",
+        aliases=("标高标注", "标注标高", "标高", "插标高", "TMElev"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TMElev",
+        verify_type="TCH_SYMBOL_ELEVATION",
+        input_template=("{point}", "{direction}"),
+        params=(
+            ParamSpec("point", "point", hint="标高点，例如 0,-2000"),
+            ParamSpec("direction", "point", required=False,
+                      hint="标高符号方向点，省略时自动取该点上方 600"),
+        ),
+        example="标高标注 0,-2000",
+        note=(
+            "实测：TMElev → 请点取标高点 → 请点取标高方向，生成 TDbSymbElevation(标高符号)。"
+            "省略方向点时自动在其上方 600 处取点。"
+        ),
+    ),
+    CommandSpec(
+        key="drawing_name",
+        aliases=("图名标注", "图名", "加图名", "TDrawingName"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TDrawingName",
+        verify_type="TCH_DRAWINGNAME",
+        input_template=("{insertion}",),
+        params=(
+            ParamSpec("insertion", "point", hint="图名插入点，例如 2000,-4000"),
+        ),
+        example="图名标注 2000,-4000",
+        note="实测：TDrawingName → 请点取插入位置，生成 TDbDrawingName(图名)。",
+    ),
+    CommandSpec(
+        key="probe_position",
+        aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
+        backend="probe_position",
+        modes=("query",),
+        verify_type=None,
+        params=(
+            ParamSpec("point", "point", hint="要校验的图纸坐标，例如 4200,3150"),
+        ),
+        example="定位自检 4200,3150",
+        note=(
+            "给一个图纸坐标：把鼠标移到换算出的屏幕位置并点击，再用 AutoCAD 的 ID 命令"
+            "读回实际落点，报告误差（世界单位与像素）。用于区分“坐标换算错”和"
+            "“换算对但点的位置不在图元上”两种点歪情况。"
+        ),
+    ),
+    CommandSpec(
         key="dim_wall",
         aliases=("墙厚标注", "标注墙厚", "标墙厚", "TDimWall"),
         backend="tianzheng_custom",
@@ -530,15 +589,6 @@ def suggest_verify_type(command: str | None) -> str | None:
     # Also accept a spec key such as "draw_wall" as a convenience.
     spec = _BY_KEY.get(token.lower())
     return spec.verify_type if spec else None
-
-
-def resolve_entity_token(token: str) -> str | None:
-    """Chinese/English entity word -> canonical entity type name."""
-    key = token.strip().lower()
-    for chinese, value in _ENTITY_CHOICES:
-        if key == chinese.lower():
-            return value
-    return None
 
 
 def entity_choices() -> dict[str, str]:

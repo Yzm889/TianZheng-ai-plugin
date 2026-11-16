@@ -21,6 +21,7 @@ Design notes that drove this implementation (learned the hard way on T20-Arch V1
 """
 from __future__ import annotations
 
+import os
 import time
 from typing import Any, Sequence
 
@@ -607,6 +608,191 @@ def _run_with_dialog_impl(
             hints.append("未新增实体：请检查输入点是否落在墙上，或命令是否需要鼠标拾取。")
         result["diagnosis"] = " ".join(hints)
     return result
+
+
+def _pick_world_point(app: Any, doc: Any, pid: int, screen_point: tuple[int, int]) -> tuple[float, float] | None:
+    """Click a screen point inside AutoCAD's ID command and read back the world point."""
+    import re as _re
+
+    mark = winmsg.command_output_size(pid)
+    try:
+        _post_text(doc, "_.ID\n")
+    except Exception:
+        return None
+    time.sleep(0.9)
+    sendinput.click(screen_point[0], screen_point[1], settle=0.4)
+    winmsg.wait_for_output(pid, mark, timeout=6.0, settle=0.35)
+    time.sleep(0.4)
+    tail = winmsg.command_tail(pid, 260)
+    terminate_active_command(app, pid)
+    time.sleep(0.3)
+    xs = _re.findall(r"X\s*=\s*(-?\d+(?:\.\d+)?)", tail, _re.IGNORECASE)
+    ys = _re.findall(r"Y\s*=\s*(-?\d+(?:\.\d+)?)", tail, _re.IGNORECASE)
+    if xs and ys:
+        return float(xs[-1]), float(ys[-1])
+    return None
+
+
+def calibrate_view(app: Any, doc: Any, pid: int | None = None,
+                   probe_px: int = 220) -> dict[str, Any]:
+    """Measure the world<->screen transform empirically with three ID picks.
+
+    MEASURED: every piece of view metadata lied. `ActiveViewport.Center` reported
+    (4200,3150) while a click at the window centre returned world (4206,12429), and
+    the effective view height was ~26000 units although `ActiveViewport.Height`
+    reported 7500 -- so `ZoomExtents`, `Height` and VIEWCTR were all unreliable.
+    Clicking three known screen points and reading the world result back with the ID
+    command produces a transform that is correct by construction.
+    """
+    from . import screen_map
+
+    pid = pid or app_process_id(app)
+    if not pid:
+        raise AcadError("Cannot resolve the AutoCAD process id.")
+
+    pane = screen_map.doc_view_window(doc, int(app.HWND))
+    rect = screen_map.drawing_view_rect(pane)
+    if not rect:
+        raise AcadError("无法取得绘图窗格矩形。")
+    left, top, width, height = rect
+    cx, cy = left + width // 2, top + height // 2
+
+    sendinput.focus_drawing_view(int(app.HWND))
+    sendinput.ensure_focus(int(app.HWND), attempts=2)
+
+    p0 = _pick_world_point(app, doc, pid, (cx, cy))
+    p1 = _pick_world_point(app, doc, pid, (cx + probe_px, cy))
+    p2 = _pick_world_point(app, doc, pid, (cx, cy + probe_px))
+    if not (p0 and p1 and p2):
+        return {"calibrated": False, "rect": rect,
+                "error": "标定失败：ID 未回显坐标。", "picks": [p0, p1, p2]}
+
+    # px per world unit (y is inverted on screen)
+    scale_x = (p1[0] - p0[0]) / float(probe_px)
+    scale_y = (p0[1] - p2[1]) / float(probe_px)
+    if scale_x == 0 or scale_y == 0:
+        # The probe clicks did not register (usually because AutoCAD was not in the
+        # foreground). Re-focus and try once more before giving up.
+        sendinput.focus_window(int(app.HWND))
+        sendinput.ensure_focus(int(app.HWND), attempts=3)
+        time.sleep(0.4)
+        p0 = _pick_world_point(app, doc, pid, (cx, cy))
+        p1 = _pick_world_point(app, doc, pid, (cx + probe_px, cy))
+        p2 = _pick_world_point(app, doc, pid, (cx, cy + probe_px))
+        if p0 and p1 and p2:
+            scale_x = (p1[0] - p0[0]) / float(probe_px)
+            scale_y = (p0[1] - p2[1]) / float(probe_px)
+        if not (p0 and p1 and p2) or scale_x == 0 or scale_y == 0:
+            return {"calibrated": False, "rect": rect,
+                    "error": "标定失败：三次取点没有区分度（点击未生效）。",
+                    "picks": [p0, p1, p2]}
+
+    state = {
+        "left": left, "top": top, "width": width, "height": height,
+        "centre": p0,                      # world point at the pane centre
+        "scale": 1.0 / ((abs(scale_x) + abs(scale_y)) / 2.0),  # px per unit
+        "viewsize": height * ((abs(scale_x) + abs(scale_y)) / 2.0),
+        "source": "calibrated",
+        "scale_x": scale_x, "scale_y": scale_y,
+        "panes": rect,
+        "picks": [p0, p1, p2],
+        "probe_px": probe_px,
+    }
+    return state
+
+
+def verify_position(world_x: float, world_y: float, timeout: float = 20.0) -> dict[str, Any]:
+    """定位自检: click a computed screen point and read back where AutoCAD says it landed.
+
+    Uses AutoCAD's own ID command, which prints the picked point to the command
+    line, so the *real* location can be compared with the intended one without any
+    OCR. This separates the two possible reasons a click "misses":
+      * the coordinate mapping is wrong (large error), or
+      * the mapping is fine but the clicked point is not on the geometry that
+        needed to be selected (small error).
+    """
+    return _com(_verify_position_impl, float(world_x), float(world_y), float(timeout),
+                timeout=float(timeout) + 60.0)
+
+
+def _verify_position_impl(world_x: float, world_y: float, timeout: float) -> dict[str, Any]:
+    import re as _re
+
+    from . import screen_map
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+    pid = app_process_id(app)
+    if not pid:
+        raise AcadError("Cannot resolve the AutoCAD process id.")
+
+    sendinput.focus_drawing_view(int(app.HWND))
+    sendinput.ensure_focus(int(app.HWND), attempts=2)
+
+    # Calibrate empirically: every piece of view metadata proved unreliable
+    # (ActiveViewport.Center claimed 3150 while a click at the window centre
+    # returned world y = 12473), so the transform is measured with ID picks.
+    state = calibrate_view(app, doc)
+    if not state or not state.get("centre"):
+        return {"success": False, "error": state.get("error") or "视图标定失败。"}
+
+    point = screen_map.world_to_screen(state, world_x, world_y)
+    if not point:
+        return {"success": False, "error": "坐标换算失败。"}
+    if not screen_map.inside_view(state, point):
+        return {
+            "success": False,
+            "error": "目标点在当前视口之外，请先缩放/平移使其可见。",
+            "screen_point": list(point),
+            "view": {k: state[k] for k in ("left", "top", "width", "height", "viewsize", "scale")},
+        }
+
+    mark = winmsg.command_output_size(pid)
+    _post_text(doc, "_.ID\n")
+    time.sleep(1.2)
+    sendinput.click(point[0], point[1], settle=0.4)
+    winmsg.wait_for_output(pid, mark, timeout=8.0, settle=0.4)
+    time.sleep(0.6)
+    tail = winmsg.command_tail(pid, 400)
+    terminate_active_command(app, pid)
+
+    # AutoCAD prints: X = 1234.5678   Y = 2345.6789   Z = 0.0000
+    xs = _re.findall(r"X\s*=\s*(-?\d+(?:\.\d+)?)", tail, _re.IGNORECASE)
+    ys = _re.findall(r"Y\s*=\s*(-?\d+(?:\.\d+)?)", tail, _re.IGNORECASE)
+    actual = None
+    if xs and ys:
+        actual = (float(xs[-1]), float(ys[-1]))
+
+    report: dict[str, Any] = {
+        "success": actual is not None,
+        "target": [world_x, world_y],
+        "screen_point": list(point),
+        "view": {
+            "left": state["left"], "top": state["top"],
+            "width": state["width"], "height": state["height"],
+            "centre": list(state["centre"]), "viewsize": state["viewsize"],
+            "scale": round(state["scale"], 6), "source": state.get("source"),
+        },
+        "raw_tail": tail[-200:],
+    }
+    if actual:
+        err_x = actual[0] - world_x
+        err_y = actual[1] - world_y
+        dist = (err_x ** 2 + err_y ** 2) ** 0.5
+        report["actual"] = [round(actual[0], 2), round(actual[1], 2)]
+        report["error"] = {
+            "dx": round(err_x, 2), "dy": round(err_y, 2),
+            "distance": round(dist, 2),
+            "pixels": round(dist * state["scale"], 2),
+        }
+        report["verdict"] = (
+            "定位准确" if dist * state["scale"] <= 2.0
+            else ("有偏差" if dist * state["scale"] <= 10.0 else "定位错误")
+        )
+    else:
+        report["error"] = {"message": "ID 命令没有回显坐标，未能校验。"}
+    return report
 
 
 def insert_title_frame(size: str = "A3", insertion: str | None = None,

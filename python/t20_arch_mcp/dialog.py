@@ -206,22 +206,6 @@ def visible_edits(dlg_hwnd: int) -> list[dict[str, Any]]:
     return [c for c in child_controls(dlg_hwnd) if c["class"] == "Edit" and c["visible"]]
 
 
-def describe(dlg_hwnd: int) -> dict[str, Any]:
-    """Report a dialog's editable fields and buttons, for diagnostics."""
-    kids = child_controls(dlg_hwnd)
-    return {
-        "edits": [
-            {"index": i, "text": read_text(e["hwnd"])}
-            for i, e in enumerate([k for k in kids if k["class"] == "Edit" and k["visible"]])
-        ],
-        "buttons": [
-            {"id": k["id"], "text": k["text"], "visible": k["visible"]}
-            for k in kids
-            if k["class"] == "Button"
-        ],
-    }
-
-
 def fill_and_accept(
     pid: int,
     title_contains: str,
@@ -279,14 +263,3 @@ def fill_and_accept(
     return report
 
 
-def dismiss(pid: int, title_contains: str, cancel_id: int = 2) -> bool:
-    dlg = find_dialog(pid, title_contains)
-    if not dlg:
-        return True
-    send_command(dlg["hwnd"], cancel_id)
-    time.sleep(0.3)
-    if find_dialog(pid, title_contains) is None:
-        return True
-    user32.PostMessageW(wintypes.HWND(dlg["hwnd"]), WM_CLOSE, 0, 0)
-    time.sleep(0.3)
-    return find_dialog(pid, title_contains) is None

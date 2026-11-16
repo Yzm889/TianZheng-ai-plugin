@@ -57,6 +57,14 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
+    if plan.backend == "probe_position":
+        if not success:
+            return f"定位自检失败：{raw.get('error') or '未取得落点'}。"
+        err = raw.get("error") or {}
+        return (
+            f"目标 {raw.get('target')} → 实际 {raw.get('actual')}，"
+            f"误差 {err.get('distance')} 单位（{err.get('pixels')} 像素）：{raw.get('verdict')}。"
+        )
     if plan.backend == "tianzheng_title":
         size = raw.get("size") or plan.params.get("size") or "A3"
         if not success:
@@ -165,6 +173,20 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             "hint": "如需手动调用，可使用 run_tianzheng_command 并配合 probe_command 观察结果。",
         }
 
+    if backend == "probe_position":
+        from . import tianzheng_runner
+
+        raw_point = params.get("point")
+        if not raw_point:
+            return {"ok": False, "error": "定位自检需要一个坐标，例如：定位自检 4200,3150"}
+        try:
+            wx, wy = [float(v) for v in str(raw_point).replace(";", ",").split(",")[:2]]
+        except Exception:
+            return {"ok": False, "error": f"无法解析坐标：{raw_point!r}"}
+        report = tianzheng_runner.verify_position(wx, wy)
+        report["ok"] = bool(report.get("success"))
+        return report
+
     if backend == "tianzheng_title":
         from . import tianzheng_runner
 
@@ -197,6 +219,20 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "tianzheng_custom" and plan.intent == "annotate_elevation":
+        from . import tianzheng_runner  # noqa: F401  (name is used further below)
+
+        # TMElev wants a second "direction" point; derive it above the symbol point
+        if not params.get("direction"):
+            try:
+                px, py = [float(v) for v in str(params.get("point")).split(",")[:2]]
+                params["direction"] = f"{px:g},{py + 600:g}"
+            except Exception:
+                params["direction"] = "0,600"
+            # plan.inputs was built during parsing, so it must be rebuilt here or
+            # the command still receives the placeholder for the missing point.
+            plan.inputs = [str(params["point"]), str(params["direction"])]
 
     if backend == "tianzheng_custom":
         # Commands whose prompt chain needs literal tokens (selection keywords like

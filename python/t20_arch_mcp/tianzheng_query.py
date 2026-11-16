@@ -45,6 +45,9 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "TCH_DIMENSION2": ("TCH_DIMENSION2", "TDBDIMENSION2", "TDbDimension2"),
     # Tables/schedules (门窗表, 图纸目录) are TDbSheet.
     "TCH_SHEET": ("TCH_SHEET", "TDBSHEET", "TDbSheet"),
+    # 标高符号 (TMElev) and 图名 (TDrawingName)
+    "TCH_SYMBOL_ELEVATION": ("TCH_SYMBOL_ELEVATION", "TDBSYMBELEVATION", "TDbSymbElevation"),
+    "TCH_DRAWINGNAME": ("TCH_DRAWINGNAME", "TDBDRAWINGNAME", "TDbDrawingName"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is

@@ -183,7 +183,7 @@ _LABEL_WORDS: dict[str, tuple[str, ...]] = {
     "height": ("字高", "文字高度", "窗高", "门高", "高度", "高"),
     "width": ("门宽", "窗宽", "宽度", "宽"),
     "sill": ("窗台高", "门槛高", "门槛", "窗台", "台高"),
-    "thickness": ("板厚", "厚度", "板厚度"),
+    "thickness": ("板厚度", "板厚", "墙厚", "厚度", "墙宽"),
     "x_spacing": ("横向间距", "x间距", "x方向间距", "开间", "间距"),
     "y_spacing": ("纵向间距", "y间距", "y方向间距", "进深"),
     "x_bays": ("横向跨数", "x跨数", "x方向跨数"),
@@ -370,8 +370,9 @@ def parse(text: str) -> ParseResult:
         if pspec.kind == "point":
             if points:
                 params[name] = _format_point(points[0])
-                if len(points) > 1:
-                    points = points[1:]  # consume left-to-right for multi-point specs
+                # always consume, otherwise a single point would be reused for the
+                # NEXT point parameter (measured: 标高标注 got the same point twice)
+                points = points[1:]
             elif "原点" in norm:
                 params[name] = "0,0"
             elif not getattr(pspec, "required", True):

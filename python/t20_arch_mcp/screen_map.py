@@ -91,6 +91,21 @@ def _descendants(hwnd: int) -> list[int]:
     return out
 
 
+def ctypes_variant_triple(x: float, y: float, z: float):
+    from win32com.client import VARIANT
+    import pythoncom
+
+    return VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (float(x), float(y), float(z)))
+
+
+def ctypes_variant_pair(x: float, y: float):
+    """VARIANT(VT_ARRAY|VT_R8) with exactly two elements (2D point)."""
+    from win32com.client import VARIANT  # noqa: F401  (pywin32)
+    import pythoncom
+
+    return VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (float(x), float(y)))
+
+
 def view_state_for_doc(doc: Any, fallback_hwnd: int | None = None) -> dict[str, Any]:
     """View transform using the correct inner drawing pane."""
     pane = doc_view_window(doc, fallback_hwnd)
@@ -114,28 +129,43 @@ def drawing_view_rect(view_hwnd: int) -> tuple[int, int, int, int] | None:
 
 
 def view_state(doc: Any, view_hwnd: int) -> dict[str, Any]:
-    """Current view transform parameters, or {} when they cannot be read."""
+    """Current view transform parameters, or {} when they cannot be read.
+
+    Uses ActiveViewport.Center/Height, NOT GetVariable("VIEWCTR"/"VIEWSIZE") --
+    measured, the variables disagreed with the real view: VIEWCTR said
+    (4198, 3151) while ActiveViewport.Center said (25708, 22590), and clicks
+    computed from VIEWCTR landed thousands of units away. The viewport object is
+    the authoritative source.
+    """
     rect = drawing_view_rect(view_hwnd)
     if not rect:
         return {}
     left, top, width, height = rect
+
+    centre: tuple[float, float] | None = None
+    view_height_units: float | None = None
+    source = ""
     try:
-        centre = _as_pair(doc.GetVariable("VIEWCTR"))
-        view_size = float(doc.GetVariable("VIEWSIZE"))
+        vp = doc.ActiveViewport
+        centre = _as_pair(vp.Center)
+        view_height_units = float(vp.Height)
+        source = "ActiveViewport"
     except Exception:
+        centre, view_height_units = None, None
+
+    if not centre or not view_height_units or view_height_units <= 0:
         return {}
-    if view_size <= 0:
-        return {}
-    # pixels per drawing unit (vertical); AutoCAD keeps x/y isotropic in plan view
-    scale = height / view_size
+
+    scale = height / view_height_units
     return {
         "left": left,
         "top": top,
         "width": width,
         "height": height,
         "centre": centre,
-        "viewsize": view_size,
+        "viewsize": view_height_units,
         "scale": scale,
+        "source": source,
     }
 
 
@@ -160,18 +190,3 @@ def inside_view(state: dict[str, Any], point: tuple[int, int]) -> bool:
     )
 
 
-def entity_screen_point(doc: Any, view_hwnd: int, entity: Any) -> tuple[int, int] | None:
-    """Screen position of an entity's bounding-box centre."""
-    state = view_state_for_doc(doc, view_hwnd)
-    if not state:
-        return None
-    try:
-        mn, mx = entity.GetBoundingBox()
-        wx = (float(mn[0]) + float(mx[0])) / 2.0
-        wy = (float(mn[1]) + float(mx[1])) / 2.0
-    except Exception:
-        return None
-    point = world_to_screen(state, wx, wy)
-    if point and inside_view(state, point):
-        return point
-    return None

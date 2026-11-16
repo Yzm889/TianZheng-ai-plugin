@@ -164,12 +164,6 @@ def type_unicode(text: str, settle: float = 0.02) -> None:
         time.sleep(settle)
 
 
-def type_line(text: str, settle: float = 0.06) -> None:
-    """Type a line of text and press Enter."""
-    type_unicode(text)
-    press_key(VK_RETURN, settle)
-
-
 def send_escape(times: int = 1, settle: float = 0.15) -> None:
     for _ in range(times):
         press_key(VK_ESCAPE, settle)
@@ -211,19 +205,6 @@ def click(x: int, y: int, settle: float = 0.15) -> None:
     time.sleep(settle)
 
 
-def window_rect(hwnd: int) -> tuple[int, int, int, int] | None:
-    """Client area rect in screen coordinates: (left, top, right, bottom)."""
-    try:
-        rect = wintypes.RECT()
-        if not user32.GetClientRect(wintypes.HWND(hwnd), ctypes.byref(rect)):
-            return None
-        pt = wintypes.POINT(0, 0)
-        user32.ClientToScreen(wintypes.HWND(hwnd), ctypes.byref(pt))
-        return pt.x, pt.y, pt.x + rect.right, pt.y + rect.bottom
-    except Exception:
-        return None
-
-
 def descendants(hwnd: int) -> list[int]:
     """Every descendant window handle of `hwnd`."""
     out: list[int] = []
@@ -238,20 +219,6 @@ def descendants(hwnd: int) -> list[int]:
     except Exception:
         pass
     return out
-
-
-def allow_click_to_focus() -> bool:
-    """Click-to-focus is DISABLED by default; it was actively harmful.
-
-    MEASURED: clicking inside the drawing area to move the keyboard there makes
-    AutoCAD start a window selection ("指定对角点或 [栏选(F)/圈围(WP)/圈交(CP)]").
-    The next typed coordinate then became a selection corner instead of a command
-    input, and one run even ended up executing `_HELP` (the Help dialog, which is
-    modal and blocks every COM call). Focus is now moved with SetFocus on the
-    drawing view, which generates no mouse event at all.
-    """
-    raw = os.environ.get("T20_CLICK_TO_FOCUS", "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
 
 
 _VIEW_CLASS_HINTS = ("FLIP_MODE_VIEW", "ACADDM_CHILD")
