@@ -74,7 +74,37 @@ Verified wall geometry: `object_name=TDbWall`, layer `WALL`, bbox `X 0→7000, Y
 
 ---
 
-## Tools (15)
+## Tools (18)
+
+### Natural language (preferred entry point)
+
+| Tool | What it does |
+|---|---|
+| `natural_language(text, dry_run=False, auto_create_drawing=True)` | Parse → validate → execute → report, with structured Chinese errors |
+| `preview_natural_language(text)` | Dry-run: show intent, CAD command, exact inputs and `verify_type` without touching AutoCAD |
+| `list_capabilities()` | List all supported intents, aliases and example sentences |
+
+The parser is deterministic (no extra LLM call, no new dependency) and never sends a
+half-understood instruction to AutoCAD. It normalises punctuation and units
+(`（0，0）`→`(0,0)`, `6 米`→`6000`), separates query from create intents
+(`统计墙的数量` cannot be misread as `画墙`), binds `verify_type` from the command
+catalogue, and refuses to continue when a required parameter is missing.
+
+Representative instructions (all covered by `python/tests/test_nl.py`):
+
+```
+从 0,0 到 7000,0 画一堵墙        → HZQT  ["0,0","7000,0",""]  verify TCH_WALL
+统计墙的数量                     → count_entities("TCH_WALL")
+在 100,100 画半径 500 的圆       → native AddCircle(center, 500)
+在 500,500 写文字 "轴线 A"，字高 300 → native AddText
+另存为 C:\temp\t20.dwg           → SaveAs
+检查天正是否加载                 → check_tianzheng_loaded
+```
+
+Failures return `stage: "parse"` with an error code (`UNKNOWN_INTENT`,
+`AMBIGUOUS_INTENT`, `MISSING_PARAMETER`, `INVALID_NUMBER`, ...) and a Chinese hint,
+or `stage: "execute"` with the raw backend result plus a specific diagnosis
+(TGStart not used, read-only `DataStore.dbf`, blocking dialog, ...).
 
 ### Connection & drawings
 | Tool | What it does |
@@ -236,9 +266,12 @@ A Tianzheng-enabled AutoCAD takes **60–90 s** to accept COM calls. Calls made 
 
 ---
 
-## Scope (v0.1)
+## Scope
 
-**In scope:** the wall creation loop, proven end-to-end; a universal `run_tianzheng_command` that can dispatch any Tianzheng command; native entities; entity queries.
+**In scope:** the natural-language command layer (deterministic parsing, mapping,
+validation, execution and error feedback); the wall creation loop, proven
+end-to-end; a universal `run_tianzheng_command` that can dispatch any Tianzheng
+command; native entities; entity queries.
 
 **Deliberately out of scope:**
 
@@ -261,7 +294,10 @@ dsh-t20-arch/
 ├── python/
 │   ├── requirements.txt
 │   └── t20_arch_mcp/
-│       ├── server.py           # MCP entry, 15 tools
+│       ├── server.py           # MCP entry, 18 tools
+│       ├── nl_catalog.py        # single source of truth: intent/command/verify_type/params
+│       ├── nl_parser.py         # Chinese instruction -> validated command plan
+│       ├── nl_dispatch.py       # plan -> backend call + structured Chinese feedback
 │       ├── acad_conn.py        # COM attach, STA thread, busy retry, ownership, ARX check
 │       ├── tianzheng_runner.py # PostCommand + count polling + command termination
 │       ├── tianzheng_query.py  # entity walking + TCH alias matching
@@ -269,6 +305,8 @@ dsh-t20-arch/
 │       ├── env_check.py         # install discovery + read-only detection
 │       ├── sendinput.py         # driver-level key injection
 │       └── winmsg.py            # window enumeration / dialog handling
+│   └── tests/
+│       └── test_nl.py           # 21 regression cases, no AutoCAD/pywin32 needed
 ├── LICENSE
 └── README.md
 ```
@@ -285,6 +323,9 @@ dsh-t20-arch/
 | Wall created but reported 0 | Verifying with the wrong type name | Use `TCH_WALL` (aliases `TDbWall`/`TDBWALL` are handled) |
 | Every COM call rejected | A dialog is open or a command is pending | Press ESC in AutoCAD; use `auto_dismiss_ui` |
 | Tools missing in DSH | Plugin not fully reloaded | Fully quit and reopen DSH |
+| `stage: "parse"`, `UNKNOWN_INTENT` | Phrasing outside the catalogue | Call `list_capabilities()`; rephrase using one of its example sentences |
+| `stage: "parse"`, `MISSING_PARAMETER` | Required coordinate/size not recognised | The error `hint` contains a working example; e.g. give both points for a wall |
+| `stage: "execute"`, `verify_type: null` in a command result | Output type not catalogued (e.g. HZZW) | Verification fell back to total ModelSpace count; run `probe_command` to discover the real type |
 
 Logs:
 

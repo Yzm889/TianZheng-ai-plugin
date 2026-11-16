@@ -12,13 +12,22 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import acad_conn, env_check, native_tools, tianzheng_query, tianzheng_runner
+from . import acad_conn, env_check, native_tools, nl_dispatch, tianzheng_query, tianzheng_runner
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
 
 INSTRUCTIONS = """
 Bridge to a running AutoCAD instance with T20-Arch (Tianzheng Architecture) loaded.
+
+PREFERRED ENTRY POINT for Chinese natural-language requests:
+  * Call natural_language(text) first. It deterministically maps the sentence to
+    a catalogued command, normalises coordinates/units, validates required
+    parameters and returns structured Chinese errors instead of guessing.
+  * Use preview_natural_language(text) to dry-run the mapping when unsure.
+  * Use list_capabilities() to see all supported intents and example sentences.
+  * Only fall back to the low-level run_tianzheng_command when a command is not
+    in the catalogue, and pass verify_type explicitly whenever possible.
 
 Key facts for callers:
   * Tianzheng objects (TCH_WALL, TCH_OPENING, TCH_CORNER_WINDOW, ...) are ARX custom
@@ -140,6 +149,53 @@ def close_test_drawing(save: bool = False) -> str:
 def check_tianzheng_loaded() -> str:
     try:
         return _dump({"ok": True, **acad_conn.check_tianzheng_loaded()})
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+# --------------------------------------------------------------------------- #
+# Natural language entry point (preferred for Chinese instructions)
+# --------------------------------------------------------------------------- #
+@mcp.tool(
+    name="natural_language",
+    description=(
+        "Execute a Chinese natural-language instruction end to end: parse intent, "
+        "normalise points/units, validate parameters, dispatch to the CAD backend, "
+        "and report success or an actionable Chinese error. "
+        "Examples: '从 0,0 到 7000,0 画一堵墙', '统计墙的数量', "
+        "'在 100,100 画半径 500 的圆', '保存图纸为 C:\\temp\\a.dwg'. "
+        "Set dry_run=true to only preview the mapping. The response always contains "
+        "a 'parse' block (what was understood) and, when executed, an 'execution' block."
+    ),
+)
+def natural_language(text: str, dry_run: bool = False, auto_create_drawing: bool = True) -> str:
+    try:
+        return _dump(nl_dispatch.execute(text, dry_run=dry_run, auto_create_drawing=auto_create_drawing))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
+
+
+@mcp.tool(
+    name="preview_natural_language",
+    description=(
+        "Dry-run a Chinese instruction: show the recognised intent, CAD command, "
+        "exact command-line inputs, verify_type and any warnings without touching AutoCAD."
+    ),
+)
+def preview_natural_language(text: str) -> str:
+    try:
+        return _dump(nl_dispatch.execute(text, dry_run=True))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
+
+
+@mcp.tool(
+    name="list_capabilities",
+    description="List every supported natural-language intent, its aliases, example sentence and stability note.",
+)
+def list_capabilities() -> str:
+    try:
+        return _dump(nl_dispatch.list_capabilities())
     except Exception as exc:  # noqa: BLE001
         return _dump({"ok": False, "error": str(exc)})
 

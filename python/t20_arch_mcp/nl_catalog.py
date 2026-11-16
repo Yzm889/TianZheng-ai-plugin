@@ -1,0 +1,347 @@
+"""nl_catalog.py - the single source of truth for command intent mapping.
+
+This module is deliberately dependency-free (standard library only).  Both the
+natural-language parser and the low-level Tianzheng runner import it, so an
+alias, its real CAD command, and the entity type used to verify it can never
+drift apart again.
+
+Before this module existed, the mapping lived partly in README.md, partly in
+the MCP tool descriptions, and mostly in the upstream model's imagination.
+That is why the same Chinese sentence could produce different commands, and why
+`verify_type` was frequently omitted (which made the runner compare against the
+command name and report a guaranteed failure).
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass(frozen=True)
+class ParamSpec:
+    """One parameter the parser must extract from a Chinese instruction."""
+
+    name: str
+    kind: str  # point | points | number | integer | text | path | choice
+    required: bool = True
+    default: Any = None
+    choices: tuple[str, ...] = ()      # for kind == "choice": Chinese token -> value
+    hint: str = ""
+    minimum: float | None = None
+    unit_hint: str = ""                # e.g. "mm"; numbers are normalised to mm
+
+
+@dataclass(frozen=True)
+class CommandSpec:
+    """A user intent and everything needed to execute and verify it."""
+
+    key: str
+    aliases: tuple[str, ...]
+    backend: str  # tianzheng | native | query | document | diagnostic | unsupported
+    modes: tuple[str, ...] = ()        # create | query | save | diagnostic | ui; empty = any
+    command: str | None = None         # real AutoCAD / Tianzheng command
+    verify_type: str | None = None     # entity type whose count must increase
+    params: tuple[ParamSpec, ...] = ()
+    example: str = ""
+    note: str = ""
+    unstable: bool = False             # command-line sequence not proven on the target build
+
+
+_ENTITY_CHOICES: tuple[tuple[str, str], ...] = (
+    ("墙", "TCH_WALL"),
+    ("墙体", "TCH_WALL"),
+    ("wall", "TCH_WALL"),
+    ("门", "TCH_OPENING"),
+    ("窗", "TCH_OPENING"),
+    ("门窗", "TCH_OPENING"),
+    ("opening", "TCH_OPENING"),
+    ("柱", "TCH_COLUMN"),
+    ("柱子", "TCH_COLUMN"),
+    ("column", "TCH_COLUMN"),
+    ("轴号", "TCH_AXIS_LABEL"),
+    ("轴标", "TCH_AXIS_LABEL"),
+    ("轴线标注", "TCH_AXIS_LABEL"),
+    ("楼梯", "TCH_STAIR"),
+    ("房间", "TCH_SPACE"),
+    ("空间", "TCH_SPACE"),
+    ("阳台", "TCH_BALCONY"),
+    ("楼板", "TCH_SLAB"),
+    ("板", "TCH_SLAB"),
+    ("屋顶", "TCH_ROOF"),
+    ("屋面", "TCH_ROOF"),
+    ("直线", "LINE"),
+    ("线", "LINE"),
+    ("圆", "CIRCLE"),
+    ("圆形", "CIRCLE"),
+    ("文字", "TEXT"),
+    ("文本", "TEXT"),
+)
+
+SPECS: tuple[CommandSpec, ...] = (
+    CommandSpec(
+        key="draw_wall",
+        aliases=(
+            "画墙", "绘制墙", "建墙", "创建墙", "画一段墙", "画一堵墙", "画墙体",
+            "画墙线", "一面墙", "一段墙", "墙体", "墙线", "墙", "HZQT", "TGWall",
+            "draw wall", "wall",
+        ),
+        backend="tianzheng",
+        modes=("create",),
+        command="HZQT",
+        verify_type="TCH_WALL",
+        params=(
+            ParamSpec("points", "points", hint="起点和至少一个后续点，例如 0,0 到 7000,0"),
+        ),
+        example="从 0,0 到 7000,0 画一堵墙",
+    ),
+    CommandSpec(
+        key="draw_axis_grid",
+        aliases=("画轴网", "绘制轴网", "建轴网", "轴网", "轴线网", "矩形轴网", "HZZW", "TRectAxis"),
+        backend="tianzheng",
+        modes=("create",),
+        command="HZZW",
+        verify_type=None,
+        params=(
+            ParamSpec("origin", "point", hint="轴网原点，例如 0,0"),
+            ParamSpec("x_spacing", "number", hint="横向开间，例如 6000", minimum=1, unit_hint="mm"),
+            ParamSpec("y_spacing", "number", hint="纵向进深，例如 5000", minimum=1, unit_hint="mm"),
+            ParamSpec("x_bays", "integer", hint="横向跨数，例如 3", minimum=1),
+            ParamSpec("y_bays", "integer", hint="纵向跨数，例如 2", minimum=1),
+        ),
+        example="在 0,0 画轴网，横向间距 6000，纵向间距 5000，3 跨 2 跨",
+        note="该命令在部分 T20 版本会弹出对话框；输入序列尚未在本机验证。",
+        unstable=True,
+    ),
+    CommandSpec(
+        key="draw_door",
+        aliases=("开门", "画门", "绘制门", "添加门", "门洞", "门", "MC", "TOpening"),
+        backend="tianzheng",
+        modes=("create",),
+        command="MC",
+        verify_type="TCH_OPENING",
+        params=(
+            ParamSpec("insertion", "point", hint="插入点，例如 1000,0"),
+            ParamSpec("width", "number", hint="门宽，例如 900", minimum=1, unit_hint="mm"),
+        ),
+        example="在 1000,0 开一个宽 900 的门",
+        note="门窗共用 MC 命令；不同版本的命令行顺序可能不同，请先用 probe_command 验证。",
+        unstable=True,
+    ),
+    CommandSpec(
+        key="draw_window",
+        aliases=("开窗", "画窗", "绘制窗", "添加窗", "窗洞", "窗", "TC", "TWindow"),
+        backend="tianzheng",
+        modes=("create",),
+        command="MC",
+        verify_type="TCH_OPENING",
+        params=(
+            ParamSpec("insertion", "point", hint="插入点，例如 3000,0"),
+            ParamSpec("width", "number", hint="窗宽，例如 1500", minimum=1, unit_hint="mm"),
+        ),
+        example="在 3000,0 开一个宽 1500 的窗",
+        note="门窗共用 MC 命令；不同版本的命令行顺序可能不同，请先用 probe_command 验证。",
+        unstable=True,
+    ),
+    CommandSpec(
+        key="axis_dimension",
+        aliases=("轴网标注", "标注轴号", "轴线标注", "标轴号", "ZWBZ", "TMultAxisDim"),
+        backend="unsupported",
+        modes=("create",),
+        command="ZWBZ",
+        verify_type="TCH_AXIS_LABEL",
+        example="标注轴号",
+        note="该命令完全依赖对话框选轴，无法用固定命令行序列可靠驱动。",
+    ),
+    CommandSpec(
+        key="layer_manager",
+        aliases=("图层管理", "打开图层管理器", "图层管理器", "TCGL", "TLayerManager"),
+        backend="unsupported",
+        modes=("ui",),
+        command="TCGL",
+        example="打开图层管理器",
+        note="纯界面命令，不产生实体，无法用实体数量验证成功。",
+    ),
+    CommandSpec(
+        key="count_entities",
+        aliases=(
+            "统计数量", "统计", "查询数量", "查数量", "数一下", "有多少", "几", "数量",
+            "实体数量", "数实体", "列出数量", "entity count", "count entities",
+        ),
+        backend="query",
+        modes=("query",),
+        params=(
+            ParamSpec(
+                "entity_type", "choice",
+                choices=tuple(dict(_ENTITY_CHOICES).keys()),
+                hint="要统计的实体，例如 墙 / 门 / 窗 / 柱 / 圆",
+            ),
+        ),
+        example="统计墙的数量",
+    ),
+    CommandSpec(
+        key="list_entities",
+        aliases=("列出实体", "列出墙", "实体列表", "查看实体", "显示实体", "list entities"),
+        backend="query",
+        modes=("query",),
+        params=(
+            ParamSpec(
+                "entity_type", "choice",
+                choices=tuple(dict(_ENTITY_CHOICES).keys()),
+                hint="要列出的实体，例如 墙",
+            ),
+        ),
+        example="列出墙",
+    ),
+    CommandSpec(
+        key="draw_line",
+        aliases=("画线", "画直线", "绘制直线", "画一条线", "直线", "LINE", "draw line"),
+        backend="native",
+        modes=("create",),
+        command="LINE",
+        verify_type="LINE",
+        params=(
+            ParamSpec("start", "point", hint="起点，例如 0,0"),
+            ParamSpec("end", "point", hint="终点，例如 1000,1000"),
+            ParamSpec("layer", "text", required=False, default=None, hint="可选图层名"),
+        ),
+        example="从 0,0 到 1000,1000 画一条线，图层 AXIS",
+    ),
+    CommandSpec(
+        key="draw_circle",
+        aliases=("画圆", "画圆形", "绘制圆", "圆", "圆形", "CIRCLE", "draw circle"),
+        backend="native",
+        modes=("create",),
+        command="CIRCLE",
+        verify_type="CIRCLE",
+        params=(
+            ParamSpec("center", "point", hint="圆心，例如 100,100"),
+            ParamSpec("radius", "number", hint="半径，例如 500", minimum=0.0001, unit_hint="mm"),
+            ParamSpec("layer", "text", required=False, default=None, hint="可选图层名"),
+        ),
+        example="在 100,100 画半径 500 的圆",
+    ),
+    CommandSpec(
+        key="add_text",
+        aliases=("写文字", "写文本", "添加文字", "加文字", "标注文字", "输入文字", "文字", "TEXT"),
+        backend="native",
+        modes=("create",),
+        command="TEXT",
+        verify_type="TEXT",
+        params=(
+            ParamSpec("insertion", "point", hint="插入点，例如 500,500"),
+            ParamSpec("text", "text", hint="文字内容，用引号包起来最稳妥"),
+            ParamSpec("height", "number", required=False, default=250.0,
+                      hint="字高，默认 250", minimum=1, unit_hint="mm"),
+            ParamSpec("layer", "text", required=False, default=None, hint="可选图层名"),
+        ),
+        example="在 500,500 写文字 \"轴线 A\"，字高 300",
+    ),
+    CommandSpec(
+        key="save_drawing",
+        aliases=("另存为", "保存为", "保存图纸", "存图", "保存", "save drawing", "save"),
+        backend="document",
+        modes=("save",),
+        params=(
+            ParamSpec("path", "path", required=False, default=None, hint="可选保存路径"),
+        ),
+        example="保存图纸 或 另存为 C:\\temp\\t20.dwg",
+    ),
+    CommandSpec(
+        key="new_test_drawing",
+        aliases=("新建测试图纸", "新建图纸", "新建测试图", "新建", "测试图纸", "创建测试图纸", "new drawing"),
+        backend="document",
+        modes=("create",),
+        params=(),
+        example="新建一个测试图纸",
+    ),
+    CommandSpec(
+        key="zoom_extents",
+        aliases=("缩放全图", "显示全部", "全图显示", "缩放到全图", "充满视口", "zoom extents"),
+        backend="document",
+        modes=("ui",),
+        params=(),
+        example="缩放到全图",
+    ),
+    CommandSpec(
+        key="check_tianzheng_loaded",
+        aliases=("检查天正", "检查天正是否加载", "天正加载状态", "确认天正", "check tianzheng"),
+        backend="diagnostic",
+        modes=("diagnostic",),
+        params=(),
+        example="检查天正是否加载",
+    ),
+    CommandSpec(
+        key="get_active_document",
+        aliases=("当前图纸", "活动图纸", "连接状态", "确认连接", "当前文档", "active document"),
+        backend="diagnostic",
+        modes=("diagnostic",),
+        params=(),
+        example="确认连接",
+    ),
+    CommandSpec(
+        key="diagnose_environment",
+        aliases=("诊断环境", "环境诊断", "检查环境", "诊断安装", "diagnose environment"),
+        backend="diagnostic",
+        modes=("diagnostic",),
+        params=(),
+        example="诊断环境",
+    ),
+)
+
+_BY_KEY = {spec.key: spec for spec in SPECS}
+
+
+def get_spec(key: str) -> CommandSpec | None:
+    return _BY_KEY.get(key)
+
+
+def suggest_verify_type(command: str | None) -> str | None:
+    """Map a raw CAD command (alias) to the entity type that proves it worked.
+
+    The runner calls this when a caller omits `verify_type`.  Without it the
+    runner used the command name itself ("HZQT") as the expected entity type,
+    which can never match a real object and produced false failures.
+    """
+    if not command:
+        return None
+    token = command.strip().strip("._- ").upper()
+    for spec in SPECS:
+        if spec.command and spec.command.strip().upper() == token:
+            return spec.verify_type
+        # Accept English aliases too: callers often send TGWall / TOpenimg
+        # instead of the PGP alias HZQT / MC.
+        for alias in spec.aliases:
+            if alias.isascii() and alias.strip().upper() == token:
+                return spec.verify_type
+    # Also accept a spec key such as "draw_wall" as a convenience.
+    spec = _BY_KEY.get(token.lower())
+    return spec.verify_type if spec else None
+
+
+def resolve_entity_token(token: str) -> str | None:
+    """Chinese/English entity word -> canonical entity type name."""
+    key = token.strip().lower()
+    for chinese, value in _ENTITY_CHOICES:
+        if key == chinese.lower():
+            return value
+    return None
+
+
+def entity_choices() -> dict[str, str]:
+    return dict(_ENTITY_CHOICES)
+
+
+def supported_intents() -> list[dict[str, Any]]:
+    """Compact catalogue for the MCP tool description / error hints."""
+    return [
+        {
+            "intent": spec.key,
+            "say": spec.aliases[0],
+            "command": spec.command,
+            "verify_type": spec.verify_type,
+            "example": spec.example,
+            "unstable": spec.unstable,
+            "note": spec.note,
+        }
+        for spec in SPECS
+    ]

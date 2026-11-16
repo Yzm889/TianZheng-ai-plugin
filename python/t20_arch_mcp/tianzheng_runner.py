@@ -36,16 +36,10 @@ from .acad_conn import (
     is_owned_document,
     wait_until_quiescent as _wait_quiescent,
 )
+from .nl_catalog import suggest_verify_type
 from .tianzheng_query import _matches, _object_name, normalize_type
 
 DEFAULT_TIMEOUT = 20.0
-
-
-def _pid(app: Any) -> int | None:
-    try:
-        return int(app.GetAcadState().IsQuiescent) and None or app_process_id(app)
-    except Exception:
-        return app_process_id(app)
 
 
 def app_process_id(app: Any) -> int | None:
@@ -96,6 +90,22 @@ def _histogram(doc: Any) -> dict[str, int]:
         key = normalize_type(name) if name else "<unknown>"
         seen[key] = seen.get(key, 0) + 1
     return seen
+
+
+def _count_observed(doc: Any, entity_type: str | None) -> int:
+    """Count the proof entity, or all ModelSpace entities when the type is unknown.
+
+    Commands such as HZZW may create a type we have not catalogued yet.  Falling
+    back to the ModelSpace total is honest (we say what we measured in
+    `verify_mode`) and far better than comparing against the command name,
+    which could never match and reported a guaranteed false failure.
+    """
+    if entity_type:
+        return _count_type(doc, entity_type)
+    try:
+        return int(call_with_retry(lambda: doc.ModelSpace.Count, attempts=3, delay=0.25))
+    except Exception:
+        return 0
 
 
 def _last_prompt(doc: Any) -> str | None:
@@ -227,9 +237,10 @@ def _run_impl(
     call_with_retry(lambda: app.GetAcadState().IsQuiescent, attempts=1, delay=0.1)
     _wait_quiescent(app, timeout=20.0)
 
-    observed = verify_type or command.strip().upper()
+    observed = verify_type or suggest_verify_type(command)
+    verify_mode = "entity_type" if observed else "model_space_total"
     before_hist = _histogram(doc)
-    before_typed = _count_type(doc, observed)
+    before_typed = _count_observed(doc, observed)
     payload = _build_payload(command, inputs)
 
     pid = app_process_id(app)
@@ -272,7 +283,7 @@ def _run_impl(
                 dismissed.extend(acted)
         try:
             now_typed = call_with_retry(
-                lambda: _count_type(doc, observed), attempts=3, delay=0.25
+                lambda: _count_observed(doc, observed), attempts=3, delay=0.25
             )
         except Exception:
             continue
@@ -301,7 +312,7 @@ def _run_impl(
 
     try:
         after_hist = _histogram(doc)
-        after_typed = _count_type(doc, observed)
+        after_typed = _count_observed(doc, observed)
     except Exception as exc:  # noqa: BLE001
         after_hist = before_hist
         after_typed = before_typed
@@ -330,6 +341,7 @@ def _run_impl(
         "inputs": inputs,
         "sent_payload": payload.replace("\n", "\\n"),
         "verify_type": observed,
+        "verify_mode": verify_mode,
         "mode": mode,
         "counts": {
             "before": before_typed,
@@ -359,7 +371,9 @@ def _run_impl(
         }
 
     if not success:
-        result["diagnosis"] = _diagnose(prompt, delta_typed, type_deltas, com_error, ui_after)
+        result["diagnosis"] = _diagnose(
+            prompt, delta_typed, type_deltas, com_error, ui_after, observed, verify_mode
+        )
     return result
 
 
@@ -369,6 +383,8 @@ def _diagnose(
     type_deltas: dict[str, int],
     com_error: str | None,
     ui_after: dict | None,
+    observed: str | None = None,
+    verify_mode: str = "entity_type",
 ) -> str:
     hints: list[str] = []
     text = (prompt or "")
@@ -386,7 +402,7 @@ def _diagnose(
             "The command was cancelled, so the input sequence does not match what this "
             "Tianzheng build expects. Adjust the number/order of inputs (see run results)."
         )
-    if ui_after and ui_after.get("has_blocking_dialog"):
+    if ui_after and ui_after.get("blocking_dialogs"):
         hints.append(
             "A Tianzheng dialog is still open ('"
             + "', '".join(w["title"] for w in ui_after["blocking_dialogs"])
@@ -395,13 +411,18 @@ def _diagnose(
     if type_deltas and delta_typed <= 0:
         hints.append(
             "ModelSpace did change (" + ", ".join(f"{k}+{v}" for k, v in type_deltas.items())
-            + f") but no new '{'verify_type'}' appeared. Check the type name or the command used."
+            + f") but no new '{observed}' appeared. Check the type name or the command used."
         )
     if not type_deltas and delta_typed <= 0:
         hints.append(
             "Nothing was added to ModelSpace. Most likely the Tianzheng panel stayed "
             "open (it needs the mouse or a different input sequence), or the input "
             "sequence was rejected. Compare 'sent_payload' with 'last_prompt'."
+        )
+    if verify_mode == "model_space_total":
+        hints.append(
+            "This command's output type is not catalogued, so success was judged by "
+            "the total ModelSpace count. Run probe_command to discover the exact type."
         )
     return " ".join(hints)
 
