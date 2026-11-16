@@ -35,6 +35,9 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | 门窗 door / window | `MC` | `TDbOpening` | ✅ |
 | 轴网 axis grid | `HZZW` | 8–12 axes, `LINE` on `DOTE` | ✅ |
 | 轴网标注 axis annotation | `ZWBZ` | `TDbAxisLabelSet` + `TDbDimension2` | ✅ |
+| 尺寸标注 quick dim | `TQuickDim` | `TDbDimension2` | ✅ `ALL` + 尺寸线位置 |
+| 尺寸标注 point dim | `TDimMP` | `TDbDimension2` | ✅ 两点 + 尺寸线位置 |
+| 房间名称/面积 room label | `TUpdSpace` | `TDbSpace` | ✅ 自动带名称与面积 |
 | 柱子 column | `TGColumn` | `TDbColumn` | ✅ |
 | 楼梯 stair | `TLStair` | `TDbLineStair` | ✅ |
 | 阳台 balcony | `TBalcony` | `TDbBalcony` | ✅ |
@@ -49,6 +52,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | Capability | Why not |
 |---|---|
 | 轴网 `HZZW`（仅“PC2T20”分支时） | 同一命令会走两条分支：`请选择插入点`（可自动）或 `PC2T20 选择需要转化的图元`（要求选取图元，坐标无效）。分支由天正轴网数据状态决定，命令行无法选择 |
+| 改墙厚 `TWallThick` | **Destructive under automation**: driving it with a guessed input sequence erased all four walls (4 → 0). `TDbWall` exposes no width/thickness property over COM, so per-wall thickness cannot be set safely. Walls use Tianzheng's configured default thickness; change it in 天正设置 → 墙体 if needed |
 | 图层管理器 `TCGL` | Pure UI command; creates no entity, so it cannot be verified by count |
 
 ---

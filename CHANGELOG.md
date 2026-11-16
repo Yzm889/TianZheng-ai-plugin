@@ -4,6 +4,65 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-11-17
+
+**A complete, common architectural plan can now be produced from natural language.**
+
+### Added
+
+- **轴网标注 (axis annotation)** — `ZWBZ` is now reliable (3/3 measured):
+  `起始轴线 → (必要时)是否该对象[Y] → 终止轴线 → (必要时)[Y] → 跳过排除轴线 → 回车`,
+  producing `TDbAxisLabelSet`(轴号) + `TDbDimension2`(轴间尺寸).
+- **尺寸标注 (dimensions)** — two working commands:
+  - `TQuickDim`（快速标注）: `ALL → Enter → 尺寸线位置 → Enter` → `TDbDimension2 +2`
+  - `TDimMP`（逐点标注）: `p1 → p2 → 尺寸线位置 → Enter` → `TDbDimension2 +1`
+- Type aliases `TCH_AXIS_LABEL ↔ TDbAxisLabelSet`, `TCH_DIMENSION2 ↔ TDbDimension2`
+  (without them axis numbers and dimensions were always counted as 0).
+- Prompt-driven flow helpers and command-output probing (`winmsg.command_output_size`,
+  `command_tail`) so execution can react to what AutoCAD actually prints.
+
+### Verified end-to-end (9/9, natural language only)
+
+```
+在 0,0 画轴网                       -> LINE +8 (DOTE)
+轴网标注 0,y 4800,y                 -> TDbAxisLabelSet +1
+画墙 0,0 8400,0 8400,6300 0,6300    -> TDbWall +4
+在 1200,0 开一个宽 1000 的门         -> TDbOpening +1
+在 5000,0 开一个宽 1800 的窗         -> TDbOpening +1
+在 5400,1800 到 8100,4500 画一部楼梯  -> TDbLineStair +2
+搜索房间，标注位置 3000,3000          -> TDbSpace +1（自动带名称与面积）
+快速标注 0,-1500                     -> TDbDimension2 +2
+逐点标注 0,6300 8400,6300 4200,7800  -> TDbDimension2 +1
+```
+
+Result: axis numbers ①②③④, dimension chains, walls, door/window openings, stair and a
+room label (房间 49.45m²) — visually confirmed on screen.
+
+### Fixed (root causes of "sometimes it works")
+
+- **Never click the drawing area to focus.** That click starts a window selection
+  (`指定对角点`), so the next typed coordinate became a selection corner, and one run
+  even executed `_HELP` — a modal dialog that blocks every COM call. Focus is now moved
+  with `SetFocus` on the DirectX view window (no mouse event).
+- **First keystroke was swallowed** after activation (`0,0` → `,0`). Typing now pauses
+  and sends a harmless warm-up key first.
+- **The plugin brings AutoCAD to the foreground itself** before a drawing command
+  (plain foreground change, no minimise/restore flash); `T20_ALLOW_FOCUS_STEAL=0`
+  disables it. Measured working even when another window was active at call time.
+- **Real ESC keystrokes can collide with desktop-automation hotkeys** — cancellation now
+  posts ESC as window messages instead (a computer-use plugin binding Esc to "stop"
+  aborted the session twice).
+- **Tianzheng prompts may only render once input arrives**, so waiting for them
+  deadlocks; fixed-pace typing plus an entity-count check replaced prompt waiting.
+- ZWBZ no longer loops on failure (the visible "select axis → cancel → select again"
+  thrash was auto-retry; it now fails once and reports).
+
+### Documented limitation
+
+- **改墙厚 `TWallThick` is NOT automated.** A guessed input sequence erased all four
+  walls (4 → 0), and `TDbWall` exposes no width/thickness property over COM. Walls use
+  Tianzheng's configured default thickness.
+
 ## [0.4.1] — 2026-11-17
 
 ### Fixed

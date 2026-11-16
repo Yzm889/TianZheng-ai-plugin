@@ -206,6 +206,37 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="dim_quick",
+        aliases=("快速标注", "快速尺寸", "尺寸标注", "标注尺寸", "TQuickDim"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TQuickDim",
+        verify_type="TCH_DIMENSION2",
+        input_template=("ALL", "", "{dim_line}", ""),
+        params=(ParamSpec("dim_line", "point", hint="尺寸线位置，例如 0,-1200"),),
+        example="快速标注 0,-1200",
+        note=(
+            "实测可用：TQuickDim → ALL(选全部) → 回车确认 → 尺寸线位置 → 回车。"
+            "生成 TDbDimension2。适用于给已有墙体/轴网加外部尺寸。"
+        ),
+    ),
+    CommandSpec(
+        key="dim_points",
+        aliases=("逐点标注", "两点尺寸", "线性标注", "TDimMP"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TDimMP",
+        verify_type="TCH_DIMENSION2",
+        input_template=("{p1}", "{p2}", "{dim_line}", ""),
+        params=(
+            ParamSpec("p1", "point", hint="第一个尺寸点，例如 0,0"),
+            ParamSpec("p2", "point", hint="第二个尺寸点，例如 8000,0"),
+            ParamSpec("dim_line", "point", hint="尺寸线位置，例如 0,-1500"),
+        ),
+        example="逐点标注 0,0 8000,0 0,-1500",
+        note="实测可用：TDimMP → 第一点 → 第二点 → 尺寸线位置 → 回车。生成 TDbDimension2。",
+    ),
+    CommandSpec(
         key="draw_room",
         aliases=("搜索房间", "生成房间", "标记房间", "房间", "面积", "房间面积", "TUpdSpace", "TSPace"),
         backend="tianzheng_custom",
