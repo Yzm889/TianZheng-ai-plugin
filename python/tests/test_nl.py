@@ -144,6 +144,26 @@ class TestDispatchAndFeedback(unittest.TestCase):
         self.assertEqual(result["would_execute"]["intent"], "count_entities")
         self.assertEqual(executor.calls, [])
 
+    def test_data_only_backends_are_not_misreported_as_failure(self):
+        # create_test_drawing / count_entities return plain data with no ok flag.
+        executor = RecordingExecutor({"Name": "Drawing3.dwg", "is_owned_by_server": True})
+        result = nl_dispatch.execute("新建测试图纸", executor=executor)
+        self.assertTrue(result["ok"], result)
+        self.assertNotIn("errors", result)
+
+        executor = RecordingExecutor({
+            "entity_type": "TCH_WALL", "count": 1, "model_space_total": 1,
+        })
+        result = nl_dispatch.execute("统计墙的数量", executor=executor)
+        self.assertTrue(result["ok"], result)
+        self.assertEqual(result["summary"], "TCH_WALL 数量：1。")
+
+    def test_explicit_failure_flag_still_wins(self):
+        executor = RecordingExecutor({"ok": False, "error": "boom"})
+        result = nl_dispatch.execute("新建测试图纸", executor=executor)
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["errors"][0]["message"], "boom")
+
     def test_execution_failure_has_actionable_hint(self):
         executor = RecordingExecutor({
             "ok": False,

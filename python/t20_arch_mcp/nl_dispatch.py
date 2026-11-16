@@ -63,8 +63,29 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
     return raw.get("message", "") or plan.intent or ""
 
 
+def _backend_success(plan: ParseResult, raw: dict[str, Any]) -> bool:
+    """Judge backend success without assuming every tool returns `ok`.
+
+    tianzheng_runner returns `success`, native_tools returns `ok`, but
+    acad_conn.create_test_drawing and tianzheng_query.* return plain data
+    dictionaries with neither flag.  Treating a missing flag as failure made
+    real, successful operations (create drawing, count entities) report
+    `ok: false`.  Explicit false wins; otherwise an error-looking field or an
+    empty payload means failure, and a data payload means success.
+    """
+    if "ok" in raw:
+        return bool(raw["ok"])
+    if "success" in raw:
+        return bool(raw["success"])
+    if any(raw.get(key) for key in ("error", "error_type", "diagnosis", "exception")):
+        return False
+    if plan.intent == "diagnose_environment" and raw.get("found") is False:
+        return False
+    return bool(raw)
+
+
 def _wrap(plan: ParseResult, raw: dict[str, Any]) -> dict[str, Any]:
-    success = bool(raw.get("ok", raw.get("success", False)))
+    success = _backend_success(plan, raw)
     out: dict[str, Any] = {
         "ok": success,
         "stage": "execute",

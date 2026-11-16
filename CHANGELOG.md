@@ -17,7 +17,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   `list_capabilities`. 25+ command aliases across walls, axis grids, doors,
   windows, native line/circle/text, entity queries, save/new drawing and
   diagnostics.
-- **21 regression tests** (`python/tests/test_nl.py`) covering typical commands,
+- **25 regression tests** (`python/tests/test_nl.py`) covering typical commands,
   full-width punctuation, unit conversion, missing/ambiguous/illegal input,
   dry-run, execution failure hints and catalogue consistency. No AutoCAD or
   pywin32 needed.
@@ -40,6 +40,10 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - **Unrelated optional dependencies could break dispatch**: backend imports are
   now lazy and per-branch.
 - `TGWall` / `TOpening`-style English aliases now infer `verify_type` as well.
+- **Data-only backends misreported as failures**: `create_test_drawing` and
+  `count_entities` return plain data without an `ok`/`success` flag, so the
+  dispatcher reported real successes as `ok: false`. Success is now inferred
+  from the payload shape; explicit false still wins. Found in live CAD testing.
 - **Environment diagnosis missed the real blocker**: `DataStore.dbf` and
   `tchdata.dbf` exist at BOTH the Tianzheng install root and under `SYS`, but
   only `SYS` was checked. On the actual T20 V10 install the root copy of
@@ -53,8 +57,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 - `HZZW`, `MC` command-line sequences are still not validated on the target
   build (returned with `unstable: true`); `ZWBZ` and `TCGL` are reported as
   unsupported instead of faking success.
-- No live AutoCAD was available in the test environment: CAD-side execution was
-  verified with an injected executor, not against a real drawing.
+- **Live verification (2026-11-16)**: on a real T20 V10 + AutoCAD 2022 session,
+  `"从 0,0 到 7000,0 画一堵墙"` created one `TDBWALL` (0→1) via HZQT and
+  `"统计墙的数量"` returned 1. `HZZW`/`MC` sequences remain untested on hardware.
 
 ## [0.1.0] — 2026-11-16
 
