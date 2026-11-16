@@ -54,8 +54,16 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 
 ## Install
 
+Installed from the Git commit (this package is distributed via Git, not npm):
+
 ```bash
-dsh plugin add dsh-t20-arch
+npx dshpub add Yzm889/TianZheng-ai-plugin --ref <40-char-commit>
+```
+
+Or from a local clone:
+
+```bash
+dsh plugin add ./
 ```
 
 Then **fully quit and reopen DSH**. Tools appear as `mcp__t20_arch__*`.
