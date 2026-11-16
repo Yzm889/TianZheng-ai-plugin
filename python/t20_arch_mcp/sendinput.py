@@ -104,14 +104,18 @@ def focus_window(hwnd: int) -> bool:
 
 
 def allow_focus_steal() -> bool:
-    """Whether this process may pull AutoCAD in front of the user.
+    """Whether this process may bring AutoCAD to the foreground.
 
-    Off by default: someone running this in the background must not have their
-    screen hijacked. Set T20_ALLOW_FOCUS_STEAL=1 to opt in when the plugin is
-    driven interactively and taking focus is actually wanted.
+    DEFAULT ON now. Drawing commands only work when AutoCAD owns the foreground
+    (Windows delivers SendInput there and nowhere else), and leaving it off made
+    every drawing run fail unless a human clicked the window first. The activation
+    used here is a plain foreground change -- the old minimise/restore "flash" that
+    interrupted the user has been removed. Set T20_ALLOW_FOCUS_STEAL=0 to forbid it.
     """
     raw = os.environ.get("T20_ALLOW_FOCUS_STEAL", "").strip().lower()
-    return raw in ("1", "true", "yes", "on")
+    if raw in ("0", "false", "no", "off"):
+        return False
+    return True
 
 
 def ensure_focus(hwnd: int, attempts: int = 3, settle: float = 0.35) -> bool:

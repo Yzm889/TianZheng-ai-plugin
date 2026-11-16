@@ -34,6 +34,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | 墙体 wall | `HZQT` | `TDbWall` | ✅ |
 | 门窗 door / window | `MC` | `TDbOpening` | ✅ |
 | 轴网 axis grid | `HZZW` | 8–12 axes, `LINE` on `DOTE` | ✅ |
+| 轴网标注 axis annotation | `ZWBZ` | `TDbAxisLabelSet` + `TDbDimension2` | ✅ |
 | 柱子 column | `TGColumn` | `TDbColumn` | ✅ |
 | 楼梯 stair | `TLStair` | `TDbLineStair` | ✅ |
 | 阳台 balcony | `TBalcony` | `TDbBalcony` | ✅ |
@@ -48,7 +49,6 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 | Capability | Why not |
 |---|---|
 | 轴网 `HZZW`（仅“PC2T20”分支时） | 同一命令会走两条分支：`请选择插入点`（可自动）或 `PC2T20 选择需要转化的图元`（要求选取图元，坐标无效）。分支由天正轴网数据状态决定，命令行无法选择 |
-| 轴网标注 `ZWBZ` | 提示 `请选择起始轴线`，只认真天正轴线对象且要轴线上的点；轴网本身不稳定时无法可靠自动化 |
 | 图层管理器 `TCGL` | Pure UI command; creates no entity, so it cannot be verified by count |
 
 ---
@@ -79,18 +79,18 @@ venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
 - AutoCAD must run as the **same Windows user** as DSH, at the **same elevation**
 - To reuse your own Python: `setx T20_ARCH_PYTHON "E:\your-venv\Scripts\python.exe"`
 
-#### Requirement: AutoCAD must be the FOREGROUND window for drawing commands
+#### Foreground handling
 
-Windows delivers `SendInput` keystrokes only to the **foreground** window, and
-`SetFocus` alone is not enough — measured: with AutoCAD behind another window the
-typed coordinates never arrived at all (the command line showed no echo), while the
-same input worked the moment AutoCAD was in front. Read-only work (query, count,
-save, cancel) does not need this.
+Windows delivers `SendInput` keystrokes only to the **foreground** window, so drawing
+commands need AutoCAD in front. The plugin now brings AutoCAD forward itself (a plain
+foreground change, no minimise/restore flash) before a drawing command — verified
+working even when another window was active at call time. Read-only work never does
+this.
 
-So for drawing commands the agent should first **activate the AutoCAD window**, for
-example with a computer-use plugin (`wincu` worked here: activate by window title or
-PID). The plugin itself will not steal the foreground; if AutoCAD is not in front it
-returns a clear "click the drawing area" error instead of typing into nothing.
+Set `T20_ALLOW_FOCUS_STEAL=0` if you do not want the plugin activating AutoCAD at all;
+in that case drawing commands will return a clear "click the drawing area" error
+instead of typing into nothing. A computer-use plugin (e.g. `wincu`) is still handy
+for the agent, but it is no longer required.
 
 ---
 
@@ -281,6 +281,14 @@ Measured full chains:
 TSlab      : L → Enter(不可见边) → Enter(洞口) → Enter/厚度
 TUpdSpace  : ALL → Enter → <标注位置点>
 ```
+
+### 20. Tianzheng prompts may only render once input arrives
+Waiting for a prompt like `请选择起始轴线` can deadlock: measured, ZWBZ printed its
+prompt **only after** a key was sent (the prompt appeared immediately before the ESC
+cancelled it). AutoCAD buffers command-line input, so the reliable pattern is
+fixed-pace typing with a pause between values (1.8 s here) followed by an entity-count
+check — not waiting for the prompt. This took 轴网标注 from 0/3 to 3/3.
+
 Two traps found this way: `TSPace` **does not exist** (Tianzheng answers "未知命令";
 the real command is `TUpdSpace`), and a wall loop must be closed with the `C` option —
 repeating the first point draws a zero-length segment and leaves the loop open, after

@@ -364,6 +364,11 @@ def _run_with_dialog_impl(
 
     focus_ready = False
     try:
+        # Drawing commands need AutoCAD to own the foreground; bring it forward if
+        # it is not already (plain foreground change, no minimise/restore flash).
+        if not sendinput.is_foreground(int(app.HWND)):
+            sendinput.focus_window(int(app.HWND))
+            time.sleep(0.25)
         focus_ready = sendinput.ensure_focus(int(app.HWND), attempts=3, settle=0.3)
     except Exception:
         focus_ready = False
@@ -557,42 +562,34 @@ def _annotate_axis_impl(start_point: str, end_point: str, timeout: float) -> dic
         sendinput.type_into_window(int(app.HWND), value, enter=True)
         time.sleep(settle)
 
-    def await_any(needles: tuple[str, ...], wait: float) -> str | None:
-        hit = winmsg.wait_for_text(pid, needles, timeout=wait)
-        if hit is None:
-            prompts.append(f"await {needles} -> TIMEOUT; tail={winmsg.command_tail(pid, 120)[-90:]!r}")
-        else:
-            prompts.append(f"await {needles} -> {hit}")
-        return hit
+    def tail() -> str:
+        return winmsg.command_tail(pid, 200)
 
-    def give_axis(point: str, next_needles: tuple[str, ...], wait: float) -> str | None:
-        """Type one axis point, then follow the prompt until the next real step.
+    def confirm_if_asked() -> None:
+        """Answer the optional 是否为该对象?[Y] prompt when it actually appeared."""
+        for _ in range(2):
+            if "是否为该对象" in tail():
+                type_value("", settle=1.2)
+            else:
+                break
 
-        Anchored on the prompts themselves: type only once AutoCAD is actually
-        asking, and answer the optional Y/N confirmation when (and only when) it
-        appears.
-        """
-        hit = await_any(("请选择起始轴线", "请选择终止轴线", "是否为该对象", "选择无效"), wait)
-        if hit is None or "选择无效" in (hit or ""):
-            return hit
-        if "是否为该对象" in hit:
-            type_value("")  # default = 是(Y)
-        type_value(point)
-        return await_any(next_needles + ("选择无效",), wait)
-
+    # MEASURED: ZWBZ does not render its prompt until some input arrives, so
+    # waiting for "请选择起始轴线" deadlocks -- the prompt only showed up after an
+    # ESC. AutoCAD buffers command-line input, so typing with a sufficient pause
+    # works, and that is what reliably produced TDbAxisLabelSet + 4 × TDbDimension2.
     try:
-        # ZWBZ is slow to reach its first prompt (it initialises its internal Grids
-        # view first); measured >10s on a cold start, so be patient here.
-        if not await_any(("请选择起始轴线",), max(20.0, timeout * 0.7)):
-            raise AcadError("ZWBZ 未出现「请选择起始轴线」提示（可能当前没有轴网）。")
-        give_axis(start_point, ("请选择终止轴线", "是否为该对象"), max(4.0, timeout / 3))
-        give_axis(end_point, ("不需要标注", "请选择起始轴线"), max(4.0, timeout / 3))
+        type_value(start_point, settle=1.8)
+        prompts.append(f"start {start_point!r} -> {tail()[-60:]}")
+        confirm_if_asked()
 
-        if await_any(("不需要标注",), 1.5):
-            type_value("")  # skip excluded axes
-        # the command loops back to 起始轴线; Enter exits
-        if await_any(("请选择起始轴线",), 2.0):
-            type_value("")
+        type_value(end_point, settle=1.8)
+        prompts.append(f"end {end_point!r} -> {tail()[-60:]}")
+        confirm_if_asked()
+
+        if "不需要标注" in tail():
+            type_value("", settle=1.4)  # skip excluded axes
+        if "请选择起始轴线" in tail():
+            type_value("", settle=1.2)  # looped back -> Enter exits
     except Exception as exc:  # noqa: BLE001
         prompts.append(f"exception: {exc}")
 

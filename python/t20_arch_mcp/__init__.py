@@ -5,4 +5,4 @@ Tianzheng ARX modules loaded, so that native Tianzheng custom objects
 (TCH_WALL, TCH_OPENING, ...) can be produced by issuing real Tianzheng commands.
 """
 
-__version__ = "0.5.1"
+__version__ = "0.6.0"
