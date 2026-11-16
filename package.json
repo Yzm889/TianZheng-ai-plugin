@@ -12,10 +12,12 @@
     "autocad",
     "tianzheng",
     "t20",
+    "t30",
     "tangent",
     "tarch",
     "cad",
-    "architecture"
+    "architecture",
+    "bim"
   ],
   "files": [
     "lib",
@@ -31,12 +33,12 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch.git"
+    "url": "git+https://github.com/Yzm889/tianzheng-ai-plugin.git"
   },
   "bugs": {
-    "url": "https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch/issues"
+    "url": "https://github.com/Yzm889/tianzheng-ai-plugin/issues"
   },
-  "homepage": "https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch#readme",
+  "homepage": "https://github.com/Yzm889/tianzheng-ai-plugin#readme",
   "dsh": {
     "bundle": {
       "patch": "./cordis.patch.yml"
