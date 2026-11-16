@@ -37,7 +37,7 @@ class CommandSpec:
 
     key: str
     aliases: tuple[str, ...]
-    backend: str  # tianzheng | native | query | document | diagnostic | unsupported
+    backend: str  # tianzheng | tianzheng_dialog | native | query | document | diagnostic | unsupported
     modes: tuple[str, ...] = ()        # create | query | save | diagnostic | ui; empty = any
     command: str | None = None         # real AutoCAD / Tianzheng command
     verify_type: str | None = None     # entity type whose count must increase
@@ -45,6 +45,9 @@ class CommandSpec:
     example: str = ""
     note: str = ""
     unstable: bool = False             # command-line sequence not proven on the target build
+    dialog_title: str | None = None    # native parameter dialog this command opens
+    dialog_width_edit: int | None = None  # which visible Edit holds the size, e.g. 2 for 门窗参数
+    verify_layer: str | None = None    # count only entities on this layer (e.g. DOTE for axis lines)
 
 
 _ENTITY_CHOICES: tuple[tuple[str, str], ...] = (
@@ -96,51 +99,66 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="draw_axis_grid",
-        aliases=("画轴网", "绘制轴网", "建轴网", "轴网", "轴线网", "矩形轴网", "HZZW", "TRectAxis"),
+        aliases=("画轴网", "绘制轴网", "建轴网", "轴网", "轴线网", "矩形轴网", "插入轴网", "HZZW", "TRectAxis"),
         backend="tianzheng",
         modes=("create",),
         command="HZZW",
-        verify_type=None,
+        verify_type="LINE",
+        verify_layer="DOTE",
         params=(
-            ParamSpec("origin", "point", hint="轴网原点，例如 0,0"),
-            ParamSpec("x_spacing", "number", hint="横向开间，例如 6000", minimum=1, unit_hint="mm"),
-            ParamSpec("y_spacing", "number", hint="纵向进深，例如 5000", minimum=1, unit_hint="mm"),
-            ParamSpec("x_bays", "integer", hint="横向跨数，例如 3", minimum=1),
-            ParamSpec("y_bays", "integer", hint="纵向跨数，例如 2", minimum=1),
+            ParamSpec("origin", "point", hint="轴网插入点，例如 0,0"),
         ),
-        example="在 0,0 画轴网，横向间距 6000，纵向间距 5000，3 跨 2 跨",
-        note="该命令在部分 T20 版本会弹出对话框；输入序列尚未在本机验证。",
-        unstable=True,
+        example="在 0,0 画轴网",
+        note=(
+            "实测：HZZW → 请选择插入点 → 输入坐标即生成轴网（轴线在 DOTE 图层）。"
+            "开间/进深取天正内置的轴网数据；要自定义间距需操作「轴网数据」对话框，"
+            "该对话框未纳入自动化。"
+        ),
+    ),
+    CommandSpec(
+        key="draw_column",
+        aliases=("画柱", "绘制柱", "建柱", "柱子", "柱", "TGColumn"),
+        backend="tianzheng",
+        modes=("create",),
+        command="TGColumn",
+        verify_type="TCH_COLUMN",
+        params=(
+            ParamSpec("origin", "point", hint="柱子插入点，例如 0,0"),
+        ),
+        example="在 0,0 画一根柱子",
+        note="实测：TGColumn → 点取位置 → 输入坐标即放置；按天正当前柱尺寸生成。",
     ),
     CommandSpec(
         key="draw_door",
         aliases=("开门", "画门", "绘制门", "添加门", "门洞", "门", "MC", "TOpening"),
-        backend="tianzheng",
+        backend="tianzheng_dialog",
         modes=("create",),
         command="MC",
         verify_type="TCH_OPENING",
         params=(
-            ParamSpec("insertion", "point", hint="插入点，例如 1000,0"),
+            ParamSpec("insertion", "point", hint="插入点，例如 1000,0（会吸附到最近的墙）"),
             ParamSpec("width", "number", hint="门宽，例如 900", minimum=1, unit_hint="mm"),
         ),
         example="在 1000,0 开一个宽 900 的门",
-        note="门窗共用 MC 命令；不同版本的命令行顺序可能不同，请先用 probe_command 验证。",
-        unstable=True,
+        dialog_title="门窗参数",
+        dialog_width_edit=2,
+        note="实测流程：MC → 门窗参数对话框（设为门宽）→ 点取门窗插入位置 → 输入坐标（吸附到墙）。",
     ),
     CommandSpec(
         key="draw_window",
         aliases=("开窗", "画窗", "绘制窗", "添加窗", "窗洞", "窗", "TC", "TWindow"),
-        backend="tianzheng",
+        backend="tianzheng_dialog",
         modes=("create",),
         command="MC",
         verify_type="TCH_OPENING",
         params=(
-            ParamSpec("insertion", "point", hint="插入点，例如 3000,0"),
+            ParamSpec("insertion", "point", hint="插入点，例如 3000,0（会吸附到最近的墙）"),
             ParamSpec("width", "number", hint="窗宽，例如 1500", minimum=1, unit_hint="mm"),
         ),
         example="在 3000,0 开一个宽 1500 的窗",
-        note="门窗共用 MC 命令；不同版本的命令行顺序可能不同，请先用 probe_command 验证。",
-        unstable=True,
+        dialog_title="门窗参数",
+        dialog_width_edit=2,
+        note="门窗共用 MC 命令与同一个参数对话框；窗宽同样在第 3 个输入框。",
     ),
     CommandSpec(
         key="axis_dimension",
@@ -156,16 +174,6 @@ SPECS: tuple[CommandSpec, ...] = (
     # SYS\createobjcmd.ini.  Their creation is interactive (points/picks), so an
     # unverified command-line sequence must never be sent as if it were reliable.
     CommandSpec(
-        key="draw_column",
-        aliases=("画柱", "绘制柱", "建柱", "柱子", "柱", "TGColumn"),
-        backend="unsupported",
-        modes=("create",),
-        command="TGColumn",
-        verify_type="TCH_COLUMN",
-        example="画柱",
-        note="TGColumn 需要交互指定插入点与尺寸；请用 run_tianzheng_command(\"TGColumn\", ...) 手动调用。",
-    ),
-    CommandSpec(
         key="draw_slab",
         aliases=("画楼板", "画板", "绘制楼板", "楼板", "TSlab"),
         backend="unsupported",
@@ -178,32 +186,46 @@ SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         key="draw_stair",
         aliases=("画楼梯", "绘制楼梯", "建楼梯", "楼梯", "TLStair", "TRStair"),
-        backend="unsupported",
+        backend="tianzheng",
         modes=("create",),
         command="TLStair",
         verify_type="TCH_LINESTAIR",
-        example="画楼梯",
-        note="楼梯命令为多步交互流程；请用 run_tianzheng_command 手动调用。",
+        params=(
+            ParamSpec("origin", "point", hint="楼梯左下角，例如 0,0"),
+            ParamSpec("corner", "point", hint="楼梯右上角，例如 3000,3000"),
+        ),
+        example="在 0,0 到 3000,3000 画一部楼梯",
+        note="实测：TLStair 输入对角两点即可生成（TDBLINESTAIR）。踏步参数取天正当前默认值。",
     ),
     CommandSpec(
         key="draw_balcony",
         aliases=("画阳台", "绘制阳台", "阳台", "TBalcony"),
-        backend="unsupported",
+        backend="tianzheng",
         modes=("create",),
         command="TBalcony",
         verify_type="TCH_BALCONY",
-        example="画阳台",
-        note="TBalcony 需要交互拾取边界；请用 run_tianzheng_command 手动调用。",
+        params=(
+            ParamSpec("origin", "point", hint="阳台起点，例如 0,0"),
+            ParamSpec("p2", "point", hint="第二点，例如 2000,0"),
+            ParamSpec("p3", "point", hint="第三点，例如 2000,1000"),
+            ParamSpec("p4", "point", hint="第四点，例如 0,1000"),
+        ),
+        example="画阳台 0,0 2000,0 2000,1000 0,1000",
+        note="实测：TBalcony 依次输入边界点即可生成（TDBBALCONY）。",
     ),
     CommandSpec(
         key="add_tianzheng_text",
         aliases=("天正文字", "写天正文字", "天正文本", "TText", "TMText"),
-        backend="unsupported",
+        backend="tianzheng",
         modes=("create",),
         command="TText",
         verify_type="TCH_TEXT",
-        example="天正文字",
-        note="天正文字命令依赖对话框设置字高与字体，当前如实报告为未自动支持。",
+        params=(
+            ParamSpec("insertion", "point", hint="文字插入点，例如 0,0"),
+            ParamSpec("text", "text", hint="文字内容"),
+        ),
+        example="在 0,0 写天正文字 轴线说明",
+        note="实测：TText 输入插入点与文字内容即可生成（TDBTEXT）。",
     ),
     CommandSpec(
         key="layer_manager",

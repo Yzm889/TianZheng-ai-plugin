@@ -24,7 +24,7 @@ from __future__ import annotations
 import time
 from typing import Any, Sequence
 
-from . import sendinput, winmsg
+from . import dialog, sendinput, winmsg
 from .acad_conn import (
     AcadError,
     _active_document,
@@ -57,20 +57,34 @@ def app_process_id(app: Any) -> int | None:
         return None
 
 
-def _count_type(doc: Any, entity_type: str) -> int:
+def _count_type(doc: Any, entity_type: str, layer: str | None = None) -> int:
+    """Count entities of a type, optionally restricted to one layer.
+
+    The layer filter matters for axis grids: Tianzheng draws axes as ordinary
+    LINE entities on the DOTE layer, so counting plain LINEs would match unrelated
+    geometry. Restricting to DOTE is what makes the axis check meaningful.
+    """
     try:
         msp = doc.ModelSpace
         total = int(msp.Count)
     except Exception:
         return 0
     count = 0
+    want_layer = str(layer).strip().lower() if layer else None
     for index in range(total):
         try:
             entity = msp.Item(index)
         except Exception:
             continue
-        if _matches(entity_type, _object_name(entity)):
-            count += 1
+        if not _matches(entity_type, _object_name(entity)):
+            continue
+        if want_layer:
+            try:
+                if str(entity.Layer).strip().lower() != want_layer:
+                    continue
+            except Exception:
+                continue
+        count += 1
     return count
 
 
@@ -92,7 +106,7 @@ def _histogram(doc: Any) -> dict[str, int]:
     return seen
 
 
-def _count_observed(doc: Any, entity_type: str | None) -> int:
+def _count_observed(doc: Any, entity_type: str | None, layer: str | None = None) -> int:
     """Count the proof entity, or all ModelSpace entities when the type is unknown.
 
     Commands such as HZZW may create a type we have not catalogued yet.  Falling
@@ -101,7 +115,7 @@ def _count_observed(doc: Any, entity_type: str | None) -> int:
     which could never match and reported a guaranteed false failure.
     """
     if entity_type:
-        return _count_type(doc, entity_type)
+        return _count_type(doc, entity_type, layer)
     try:
         return int(call_with_retry(lambda: doc.ModelSpace.Count, attempts=3, delay=0.25))
     except Exception:
@@ -184,6 +198,194 @@ def _build_payload(command: str, inputs: Sequence[str]) -> str:
     return "\n".join(parts) + "\n"
 
 
+def run_with_dialog(
+    command: str,
+    inputs: Sequence[str] | None = None,
+    verify_type: str | None = None,
+    dialog_title: str | None = None,
+    dialog_edits: dict[int, Any] | None = None,
+    timeout: float = DEFAULT_TIMEOUT,
+    settle: float = 1.6,
+    verify_layer: str | None = None,
+) -> dict[str, Any]:
+    """Run a Tianzheng command that opens a native parameter dialog first.
+
+    Measured on T30-Arch V2.0 / AutoCAD 2022: `MC` (doors/windows) raises the
+    '门窗参数' dialog *before* asking 点取门窗插入位置. While that dialog is open
+    AutoCAD rejects all COM calls, so the dialog is filled with Win32 messages and
+    the insertion points are then posted one at a time.
+
+    `dialog_edits` maps visible edit index -> value; for 门窗参数 the order is
+    0=编号 1=门高 2=门宽 3=门槛高 4=距离 5=个数.
+    """
+    return _com(
+        _run_with_dialog_impl,
+        command,
+        list(inputs or []),
+        verify_type,
+        dialog_title,
+        dict(dialog_edits or {}),
+        float(timeout),
+        float(settle),
+        verify_layer,
+        timeout=float(timeout) + 120.0,
+    )
+
+
+def _post_text(doc: Any, text: str, attempts: int = 12, delay: float = 0.3) -> None:
+    """PostCommand with busy-retry: AutoCAD may briefly reject after a dialog."""
+    last: Exception | None = None
+    for _ in range(attempts):
+        try:
+            doc.PostCommand(text)
+            return
+        except Exception as exc:  # noqa: BLE001
+            last = exc
+            time.sleep(delay)
+    raise AcadError(f"PostCommand rejected repeatedly: {last}")
+
+
+def _run_with_dialog_impl(
+    command: str,
+    inputs: list[str],
+    verify_type: str | None,
+    dialog_title: str | None,
+    dialog_edits: dict[int, Any],
+    timeout: float,
+    settle: float,
+    verify_layer: str | None = None,
+) -> dict[str, Any]:
+    app = _attach_app()
+    doc = _active_document()
+
+    if not is_owned_document(doc) and not allow_foreign_document():
+        raise AcadError(
+            "Refusing to send commands to "
+            f"'{doc_name(doc, '?')}' because this server did not create it. "
+            "Call create_test_drawing first, or set T20_ALLOW_FOREIGN_DOC=true."
+        )
+
+    try:
+        doc.Activate()
+    except Exception:
+        pass
+    _wait_quiescent(app, timeout=20.0)
+
+    observed = verify_type or command.strip().upper()
+    before_hist = _histogram(doc)
+    before_typed = _count_type(doc, observed, verify_layer)
+    pid = app_process_id(app)
+
+    started = time.time()
+    dialog_report: dict[str, Any] | None = None
+    com_error: str | None = None
+    sent: list[str] = []
+
+    try:
+        _post_text(doc, command.strip() + "\n")
+        sent.append(command.strip())
+    except Exception as exc:  # noqa: BLE001
+        com_error = f"PostCommand failed: {exc}"
+
+    # The dialog (if this command has one) appears right after the command.
+    if dialog_title and pid:
+        try:
+            dialog_report = dialog.fill_and_accept(
+                pid, dialog_title, dialog_edits, timeout=min(timeout, 10.0)
+            )
+        except Exception as exc:  # noqa: BLE001
+            dialog_report = {"found": False, "error": str(exc)}
+
+    # Feed the interactive points one at a time.
+    #
+    # MEASURED: once a command is inside its interactive loop (点取门窗插入位置),
+    # AutoCAD rejects PostCommand with RPC_E_CALL_REJECTED, so the points cannot
+    # be posted. They must be typed like a user, which is exactly what SendInput
+    # does. (A human typing "1000,0" is accepted immediately.)
+    for item in inputs:
+        time.sleep(settle)
+        try:
+            sendinput.focus_window(int(app.HWND))
+            time.sleep(0.15)
+            text = "" if item == "" else str(item)
+            if text:
+                sendinput.type_unicode(text)
+                time.sleep(0.1)
+            sendinput.press_key(0x0D)  # Enter
+            sent.append(text)
+        except Exception as exc:  # noqa: BLE001
+            com_error = f"{com_error or ''} | input {item!r} failed: {exc}".strip(" |")
+            break
+
+    # End the command's repeat loop so AutoCAD becomes usable again.
+    time.sleep(settle * 0.6)
+    terminated = None
+    if pid:
+        try:
+            terminated = terminate_active_command(app, pid)
+        except Exception:
+            terminated = None
+
+    elapsed = round(time.time() - started, 2)
+    try:
+        after_hist = _histogram(doc)
+        after_typed = _count_type(doc, observed, verify_layer)
+    except Exception as exc:  # noqa: BLE001
+        after_hist, after_typed = before_hist, before_typed
+        com_error = com_error or f"post-check failed: {exc}"
+
+    delta_typed = after_typed - before_typed
+    type_deltas = {
+        key: count - before_hist.get(key, 0)
+        for key, count in after_hist.items()
+        if count - before_hist.get(key, 0)
+    }
+    success = delta_typed > 0
+
+    result: dict[str, Any] = {
+        "success": success,
+        "command": command,
+        "inputs": inputs,
+        "verify_type": observed,
+        "mode": "dialog",
+        "dialog": dialog_report,
+        "counts": {
+            "before": before_typed,
+            "after": after_typed,
+            "delta": delta_typed,
+            "model_space_before": sum(before_hist.values()),
+            "model_space_after": sum(after_hist.values()),
+        },
+        "type_deltas": type_deltas,
+        "elapsed_seconds": elapsed,
+        "document": _safe_doc_name(doc),
+        "command_terminated": terminated,
+        "posted": sent,
+    }
+    if com_error:
+        result["com_error"] = com_error
+    if not success:
+        hints = []
+        if com_error:
+            hints.append(com_error)
+        if dialog_report and not dialog_report.get("found"):
+            hints.append(
+                f"未检测到 '{dialog_title}' 对话框：该命令在本版本可能不需要参数框，"
+                "或标题不同。"
+            )
+        if dialog_report and dialog_report.get("found") and not dialog_report.get("closed", True):
+            hints.append("参数对话框未能关闭，命令被卡住。")
+        if type_deltas:
+            hints.append(
+                "模型有变化（" + ", ".join(f"{k}+{v}" for k, v in type_deltas.items()) + "），"
+                f"但没有新增 '{observed}'。"
+            )
+        if not hints:
+            hints.append("未新增实体：请检查输入点是否落在墙上，或命令是否需要鼠标拾取。")
+        result["diagnosis"] = " ".join(hints)
+    return result
+
+
 def run_command(
     command: str,
     inputs: Sequence[str] | None = None,
@@ -191,11 +393,13 @@ def run_command(
     timeout: float = DEFAULT_TIMEOUT,
     mode: str = "async",
     auto_dismiss_ui: bool = True,
+    verify_layer: str | None = None,
 ) -> dict[str, Any]:
     """Run a Tianzheng command and verify the model actually changed.
 
-    mode: "async"  -> SendStringToExecute + polling (default, survives UI panels)
-          "sync"   -> SendCommand (blocks; only safe when no UI opens)
+    mode: "async" -> PostCommand + polling (default; survives Tianzheng panels)
+          "sync"  -> SendCommand (blocks; only safe for commands with no UI)
+    verify_layer restricts the success check to one layer (e.g. DOTE for axes).
     """
     return _com(
         _run_impl,
@@ -205,6 +409,7 @@ def run_command(
         float(timeout),
         str(mode),
         bool(auto_dismiss_ui),
+        verify_layer,
         timeout=float(timeout) + 90.0,
     )
 
@@ -216,6 +421,7 @@ def _run_impl(
     timeout: float,
     mode: str,
     auto_dismiss_ui: bool,
+    verify_layer: str | None = None,
 ) -> dict[str, Any]:
     app = _attach_app()
     doc = _active_document()
@@ -240,7 +446,7 @@ def _run_impl(
     observed = verify_type or suggest_verify_type(command)
     verify_mode = "entity_type" if observed else "model_space_total"
     before_hist = _histogram(doc)
-    before_typed = _count_observed(doc, observed)
+    before_typed = _count_observed(doc, observed, verify_layer)
     payload = _build_payload(command, inputs)
 
     pid = app_process_id(app)
@@ -283,7 +489,7 @@ def _run_impl(
                 dismissed.extend(acted)
         try:
             now_typed = call_with_retry(
-                lambda: _count_observed(doc, observed), attempts=3, delay=0.25
+                lambda: _count_observed(doc, observed, verify_layer), attempts=3, delay=0.25
             )
         except Exception:
             continue
@@ -312,7 +518,7 @@ def _run_impl(
 
     try:
         after_hist = _histogram(doc)
-        after_typed = _count_observed(doc, observed)
+        after_typed = _count_observed(doc, observed, verify_layer)
     except Exception as exc:  # noqa: BLE001
         after_hist = before_hist
         after_typed = before_typed

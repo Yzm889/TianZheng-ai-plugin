@@ -37,8 +37,7 @@ class TestNaturalLanguageParsing(unittest.TestCase):
         ("从 0,0 到 7000,0 画一堵墙", "draw_wall", "HZQT", "TCH_WALL", ["0,0", "7000,0", ""]),
         ("画墙 从（0，0）到（7000，0）", "draw_wall", "HZQT", "TCH_WALL", ["0,0", "7000,0", ""]),
         ("HZQT 0,0 7000,0 0,5000", "draw_wall", "HZQT", "TCH_WALL", ["0,0", "7000,0", "0,5000", ""]),
-        ("在 0,0 画轴网，横向间距 6 米，纵向间距 5 米，3 跨 2 跨",
-         "draw_axis_grid", "HZZW", None, ["0,0", "6000", "5000", "3", "2", ""]),
+        ("在 0,0 画轴网", "draw_axis_grid", "HZZW", "LINE", ["0,0", ""]),
         ("在 100,100 画半径 500 的圆", "draw_circle", "CIRCLE", "CIRCLE", []),
         ("从 0,0 到 1000,1000 画一条线，图层 AXIS", "draw_line", "LINE", "LINE", []),
         ("在 500,500 写文字 \"轴线 A\"，字高 300", "add_text", "TEXT", "TEXT", []),
@@ -78,10 +77,14 @@ class TestNaturalLanguageParsing(unittest.TestCase):
         self.assertNotIn("layer", plan.params)
         self.assertTrue(plan.ok)
 
-    def test_unstable_command_is_flagged(self):
-        plan = nl_parser.parse("在 0,0 画轴网，间距 6000，3 跨 2 跨")
-        self.assertTrue(plan.unstable)
-        self.assertTrue(plan.warnings)
+    def test_axis_grid_is_verified_not_unstable(self):
+        # Measured on T30-Arch V2.0: HZZW needs only an insertion point and draws
+        # the axes as LINEs on the DOTE layer, so it is a verified capability now
+        # (it used to be flagged unstable while the sequence was unknown).
+        plan = nl_parser.parse("在 0,0 画轴网")
+        self.assertFalse(plan.unstable)
+        self.assertEqual(plan.command, "HZZW")
+        self.assertEqual(plan.inputs, ["0,0", ""])
 
 
 class TestErrorFeedback(unittest.TestCase):
@@ -192,19 +195,27 @@ class TestRealInstallAlignment(unittest.TestCase):
     """Intents added from the install's real createobjcmd.ini must be recognised."""
 
     def test_extra_object_intents(self):
-        cases = [
+        # Measured on T30-Arch V2.0: column, stair and Tianzheng text all create
+        # real Tianzheng objects from typed points, so they are executable now.
+        # Slab still needs a boundary/room pick and stays honestly unsupported.
+        executable = [
             ("画柱", "draw_column", "TGColumn"),
             ("画楼梯", "draw_stair", "TLStair"),
-            ("画楼板", "draw_slab", "TSlab"),
             ("天正文字", "add_tianzheng_text", "TText"),
         ]
-        for text, intent, command in cases:
+        for text, intent, command in executable:
             with self.subTest(text=text):
                 plan = nl_parser.parse(text)
                 self.assertEqual(plan.intent, intent)
                 self.assertEqual(plan.command, command)
-                self.assertEqual(plan.backend, "unsupported")
-                self.assertTrue(plan.note)
+                self.assertIn(plan.backend, ("tianzheng", "tianzheng_dialog"))
+
+        with self.subTest(text="画楼板"):
+            plan = nl_parser.parse("画楼板")
+            self.assertEqual(plan.intent, "draw_slab")
+            self.assertEqual(plan.command, "TSlab")
+            self.assertEqual(plan.backend, "unsupported")
+            self.assertTrue(plan.note)
 
     def test_env_check_reads_root_and_sys(self):
         import stat
@@ -254,7 +265,8 @@ class TestCatalogConsistency(unittest.TestCase):
                 self.assertEqual(nl_catalog.suggest_verify_type(command), expected)
 
     def test_unknown_command_has_no_fake_verify_type(self):
-        self.assertIsNone(nl_catalog.suggest_verify_type("HZZW"))
+        # HZZW is catalogued now (axes are LINEs on DOTE), so it must map to LINE.
+        self.assertEqual(nl_catalog.suggest_verify_type("HZZW"), "LINE")
         self.assertIsNone(nl_catalog.suggest_verify_type("SOMETHING"))
 
     def test_no_tianzheng_spec_uses_command_name_as_entity_type(self):

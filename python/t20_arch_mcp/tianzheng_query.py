@@ -75,6 +75,27 @@ def normalize_type(name: str) -> str:
     return out
 
 
+def _canon(name: str) -> str:
+    """Reduce a Tianzheng/native class name to a comparable token.
+
+    MEASURED: the same object is named differently at different layers.
+      DXF/class name : TCH_COLUMN   (what documentation and createobjcmd.ini say)
+      COM ObjectName : TDbColumn    (what Entity.ObjectName actually returns)
+    Stripping the variant prefixes from both sides makes every type match without
+    needing a hand-maintained alias for each one (walls worked only because an
+    alias had been added by hand; columns did not, and real columns were reported
+    as "0 created" while they were visibly there).
+    """
+    token = (name or "").strip().upper().replace("_", "").replace("-", "")
+    if token.startswith("ACDB"):
+        token = token[4:]
+    for prefix in ("TCH", "TDB"):
+        if token.startswith(prefix):
+            token = token[len(prefix):]
+            break
+    return token
+
+
 def _matches(requested: str, actual: str | None) -> bool:
     if not actual:
         return False
@@ -84,6 +105,9 @@ def _matches(requested: str, actual: str | None) -> bool:
         return True
     # 'TCH_WALL' should also match a reported 'ACDBTCH_WALL'.
     if got.endswith(want) or want.endswith(got):
+        return True
+    # Canonical comparison handles TCH_COLUMN vs TDbColumn and every other pair.
+    if _canon(requested) and _canon(requested) == _canon(actual):
         return True
     # Explicit alias table (TCH_WALL <-> TDbWall).
     aliases = TYPE_ALIASES.get(want)

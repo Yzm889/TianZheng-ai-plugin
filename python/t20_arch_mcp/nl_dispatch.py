@@ -44,7 +44,7 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
-    if plan.backend == "tianzheng":
+    if plan.backend in ("tianzheng", "tianzheng_dialog"):
         counts = raw.get("counts") or {}
         delta = counts.get("delta")
         detail = f"，{plan.verify_type or '模型实体总数'} +{delta}" if delta else ""
@@ -125,17 +125,84 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             "hint": "如需手动调用，可使用 run_tianzheng_command 并配合 probe_command 观察结果。",
         }
 
+    if backend == "tianzheng_dialog":
+        from . import acad_conn, env_check, nl_catalog, tianzheng_runner
+
+        spec = nl_catalog.get_spec(plan.intent or "")
+        edits: dict[int, Any] = {}
+        if spec and spec.dialog_width_edit is not None and "width" in params:
+            edits[spec.dialog_width_edit] = params["width"]
+
+        insertion = params.get("insertion")
+        inputs = [insertion, ""] if insertion else [""]
+
+        def send_dialog() -> dict[str, Any]:
+            attempts = (
+                {"settle": 1.6, "timeout": 25.0},
+                {"settle": 2.4, "timeout": 30.0},
+            )
+            last: dict[str, Any] = {}
+            for index, cfg in enumerate(attempts):
+                last = tianzheng_runner.run_with_dialog(
+                    command=plan.command or "",
+                    inputs=inputs,
+                    verify_type=plan.verify_type,
+                    dialog_title=spec.dialog_title if spec else None,
+                    dialog_edits=edits,
+                    timeout=cfg["timeout"],
+                    settle=cfg["settle"],
+                )
+                if last.get("success"):
+                    if index:
+                        last["retried"] = index
+                    return last
+            last["retried"] = len(attempts) - 1
+            return last
+
+        try:
+            return send_dialog()
+        except Exception as exc:  # noqa: BLE001
+            if not auto_create_drawing or "Refusing to send commands" not in str(exc):
+                raise
+            created = acad_conn.create_test_drawing(env_check.template_for_autocad(None))
+            retry = send_dialog()
+            retry["auto_created_drawing"] = created
+            return retry
+
     if backend == "tianzheng":
-        from . import acad_conn, env_check, tianzheng_runner
+        from . import acad_conn, env_check, nl_catalog, tianzheng_runner
+
+        spec = nl_catalog.get_spec(plan.intent or "")
+        verify_layer = spec.verify_layer if spec else None
 
         def send() -> dict[str, Any]:
-            return tianzheng_runner.run_command(
-                command=plan.command or "",
-                inputs=plan.inputs,
-                verify_type=plan.verify_type,
-                mode="async",
-                auto_dismiss_ui=True,
+            # Stepwise execution: the command is posted, then each input is typed
+            # like a user. Posting the whole payload at once races with the prompt
+            # (measured: HZZW/TGColumn silently did nothing), while stepwise works
+            # for every command proven so far, including pick-style ones.
+            attempts = (
+                {"settle": 1.8, "timeout": 20.0},
+                {"settle": 2.6, "timeout": 26.0},
             )
+            last: dict[str, Any] = {}
+            for index, cfg in enumerate(attempts):
+                last = tianzheng_runner.run_with_dialog(
+                    command=plan.command or "",
+                    inputs=plan.inputs,
+                    verify_type=plan.verify_type,
+                    dialog_title=None,
+                    dialog_edits=None,
+                    timeout=cfg["timeout"],
+                    settle=cfg["settle"],
+                    verify_layer=verify_layer,
+                )
+                if last.get("success"):
+                    if index:
+                        last["retried"] = index
+                    return last
+            # Never report success without evidence: return the real failure.
+            last["retried"] = len(attempts) - 1
+            return last
 
         try:
             return send()

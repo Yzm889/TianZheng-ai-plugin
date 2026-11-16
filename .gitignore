@@ -38,3 +38,8 @@ desktop.ini
 
 # WorkBuddy workspace memory (local only)
 .workbuddy/
+
+# AutoCAD lock files
+*.dwl
+*.dwl2
+
