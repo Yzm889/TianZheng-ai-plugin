@@ -79,6 +79,20 @@ venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
 - AutoCAD must run as the **same Windows user** as DSH, at the **same elevation**
 - To reuse your own Python: `setx T20_ARCH_PYTHON "E:\your-venv\Scripts\python.exe"`
 
+#### Strongly recommended: a computer-use / window-activation plugin
+
+Drawing commands (wall, door, window, column, stair, balcony, slab, room) must type
+coordinates into AutoCAD, and **Windows only delivers typed input to the foreground
+window**. This plugin never steals the foreground by design, so if AutoCAD is
+minimised or behind another window you will get a clear "click the drawing area"
+error instead of an action.
+
+Installing a computer-use plugin (anything that can activate a window by title/PID —
+for example the `wincu` Windows Computer Use plugin) removes that friction: the agent
+can bring AutoCAD forward for the one moment it needs the keyboard and then leave the
+user's screen alone again. Read-only work (queries, counting, saving, cancelling a
+stuck command) never needs this.
+
 ---
 
 ## Quick start
