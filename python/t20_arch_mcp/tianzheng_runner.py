@@ -795,6 +795,169 @@ def _verify_position_impl(world_x: float, world_y: float, timeout: float) -> dic
     return report
 
 
+def layout_to_frame(margin: float = 0.06, title_reserve: float = 0.22,
+                     timeout: float = 120.0) -> dict[str, Any]:
+    """排版: scale and move everything into the inserted title frame.
+
+    The frame is an A3 block reference; its bounding box gives the sheet area. The
+    right part is reserved for the title block, so the content is fitted into the
+    remaining area: the whole drawing is scaled about its lower-left corner and then
+    moved so it sits centred in that region. Scaling keeps 1:1 proportions between
+    plan and annotations (the printed scale changes, so it is reported back).
+    """
+    return _com(_layout_to_frame_impl, float(margin), float(title_reserve), float(timeout),
+                timeout=float(timeout) + 180.0)
+
+
+def _layout_to_frame_impl(margin: float, title_reserve: float,
+                          timeout: float) -> dict[str, Any]:
+    from win32com.client import CastTo, VARIANT
+    import pythoncom
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    def bbox_of(entities) -> tuple[float, float, float, float] | None:
+        minx = miny = 1e18
+        maxx = maxy = -1e18
+        for ent in entities:
+            try:
+                mn, mx = ent.GetBoundingBox()
+            except Exception:
+                continue
+            minx, miny = min(minx, float(mn[0])), min(miny, float(mn[1]))
+            maxx, maxy = max(maxx, float(mx[0])), max(maxy, float(mx[1]))
+        if minx > maxx:
+            return None
+        return minx, miny, maxx, maxy
+
+    frames = []
+    content = []
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        count = 0
+    for i in range(count):
+        try:
+            ent = doc.ModelSpace.Item(i)
+        except Exception:
+            continue
+        is_frame = False
+        try:
+            if "BLOCK" in _object_name(ent).upper():
+                br = CastTo(ent, "IAcadBlockReference")
+                if br.HasAttributes and "TITLEBLK" in str(br.Name).upper().replace("$", ""):
+                    is_frame = True
+        except Exception:
+            is_frame = False
+        (frames if is_frame else content).append(ent)
+
+    if not frames:
+        return {"success": False,
+                "error": "没有找到图框。请先执行：插入 A3 图框 在 <点>"}
+    if not content:
+        return {"success": False, "error": "图框之外没有可排版的内容。"}
+
+    frame_box = bbox_of(frames)
+    # Prefer the rectangle recorded when the frame was inserted: the frame is made
+    # of a block reference plus polylines, so the block bbox alone is much smaller
+    # than the real sheet (measured 7000x40000 instead of the full A3 area).
+    try:
+        import json as _json
+
+        saved = _json.loads(_frame_state_path().read_text(encoding="utf-8"))
+        recorded = (float(saved["x0"]), float(saved["y0"]),
+                    float(saved["x1"]), float(saved["y1"]))
+        if frame_box:
+            frame_box = (
+                min(frame_box[0], recorded[0]), min(frame_box[1], recorded[1]),
+                max(frame_box[2], recorded[2]), max(frame_box[3], recorded[3]),
+            )
+        else:
+            frame_box = recorded
+    except Exception:
+        pass
+    content_box = bbox_of(content)
+    if not frame_box or not content_box:
+        return {"success": False, "error": "无法取得图框或内容的包围盒。"}
+
+    fx0, fy0, fx1, fy1 = frame_box
+    cx0, cy0, cx1, cy1 = content_box
+    frame_w, frame_h = fx1 - fx0, fy1 - fy0
+    content_w, content_h = cx1 - cx0, cy1 - cy0
+    if content_w <= 0 or content_h <= 0:
+        return {"success": False, "error": "内容包围盒无效。"}
+
+    # usable area: whole sheet minus margins and the title-block strip on the right
+    usable_x0 = fx0 + frame_w * margin
+    usable_y0 = fy0 + frame_h * margin
+    usable_x1 = fx1 - frame_w * (margin + title_reserve)
+    usable_y1 = fy1 - frame_h * margin
+    usable_w = usable_x1 - usable_x0
+    usable_h = usable_y1 - usable_y0
+    if usable_w <= 0 or usable_h <= 0:
+        return {"success": False, "error": "图框可用区域为负，检查 margin / title_reserve 参数。"}
+
+    factor = min(usable_w / content_w, usable_h / content_h)
+    if factor <= 0:
+        return {"success": False, "error": "缩放系数无效。"}
+
+    base = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (cx0, cy0, 0.0))
+    scaled = 0
+    failed = 0
+    for ent in content:
+        try:
+            ent.ScaleEntity(base, factor)
+            scaled += 1
+        except Exception:
+            failed += 1
+
+    # after scaling the content box shrinks around the same lower-left corner
+    new_w, new_h = content_w * factor, content_h * factor
+    dx = (usable_x0 + usable_w / 2.0) - (cx0 + new_w / 2.0)
+    dy = (usable_y0 + usable_h / 2.0) - (cy0 + new_h / 2.0)
+    # COM's Move(BasePoint, DestinationPoint) takes an ABSOLUTE destination, not a
+    # displacement -- passing (dx, dy) moved everything by (dx - cx0, dy - cy0),
+    # which left the content 1000 units outside the usable area.
+    dest = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (cx0 + dx, cy0 + dy, 0.0))
+    moved = 0
+    for ent in content:
+        try:
+            ent.Move(base, dest)
+            moved += 1
+        except Exception:
+            pass
+
+    try:
+        after_box = bbox_of(content)
+    except Exception:
+        after_box = None
+    result: dict[str, Any] = {
+        "success": scaled > 0,
+        "frame": [round(v, 1) for v in frame_box],
+        "content_before": [round(v, 1) for v in content_box],
+        "content_after": [round(v, 1) for v in after_box] if after_box else None,
+        "scale_factor": round(factor, 4),
+        "usable_area": [round(usable_x0, 1), round(usable_y0, 1),
+                        round(usable_x1, 1), round(usable_y1, 1)],
+        "entities_scaled": scaled,
+        "entities_failed": failed,
+        "entities_moved": moved,
+        "move_delta": [round(dx, 1), round(dy, 1)],
+        "document": _safe_doc_name(doc),
+    }
+    if after_box:
+        inside = (
+            after_box[0] >= usable_x0 - 1 and after_box[1] >= usable_y0 - 1
+            and after_box[2] <= usable_x1 + 1 and after_box[3] <= usable_y1 + 1
+        )
+        result["inside_usable_area"] = inside
+        if not inside:
+            result["warnings"] = ["排版后内容仍未完全落在可用区域内（可能有实体不支持缩放）。"]
+    return result
+
+
 def set_title_attributes(values: dict[str, str], timeout: float = 30.0) -> dict[str, Any]:
     """填写图框标题栏: write block attributes of the inserted title frame.
 
@@ -897,6 +1060,68 @@ def _set_title_attributes_impl(values: dict[str, str], timeout: float) -> dict[s
     return result
 
 
+def _frame_state_path():
+    import os
+    from pathlib import Path
+
+    base = os.environ.get("T20_STATE_DIR")
+    root = Path(base) if base else Path.home() / ".t20_arch_mcp"
+    try:
+        root.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return root / "frame_rect.json"
+
+
+def _remember_frame_rect(doc: Any, handles_before: set, label: str = "") -> dict | None:
+    """Union bbox of the entities that appeared while inserting the frame."""
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        return None
+    minx = miny = 1e18
+    maxx = maxy = -1e18
+    for i in range(count):
+        try:
+            ent = doc.ModelSpace.Item(i)
+            handle = str(ent.Handle)
+        except Exception:
+            continue
+        if handle in handles_before:
+            continue
+        try:
+            mn, mx = ent.GetBoundingBox()
+        except Exception:
+            continue
+        minx, miny = min(minx, float(mn[0])), min(miny, float(mn[1]))
+        maxx, maxy = max(maxx, float(mx[0])), max(maxy, float(mx[1]))
+    if minx > maxx:
+        return None
+    rect = {"x0": round(minx, 3), "y0": round(miny, 3),
+            "x1": round(maxx, 3), "y1": round(maxy, 3), "label": label}
+    try:
+        import json as _json
+
+        _frame_state_path().write_text(_json.dumps(rect), encoding="utf-8")
+    except Exception:
+        pass
+    return rect
+
+
+def _all_handles(doc: Any) -> set:
+    out = set()
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        return out
+    for i in range(count):
+        try:
+            out.add(str(doc.ModelSpace.Item(i).Handle))
+        except Exception:
+            continue
+    return out
+
+
 def insert_title_frame(size: str = "A3", insertion: str | None = None,
                        timeout: float = 40.0) -> dict[str, Any]:
     """插入图框 (TTitleFrame) by driving its native 插入图框 dialog.
@@ -929,6 +1154,7 @@ def _insert_title_frame_impl(size: str, insertion: str | None, timeout: float) -
 
     before_hist = _histogram(doc)
     before_total = sum(before_hist.values())
+    handles_before = _all_handles(doc)
     steps: list[str] = []
     started = time.time()
 
@@ -1003,6 +1229,7 @@ def _insert_title_frame_impl(size: str, insertion: str | None, timeout: float) -
         if after_total > before_total:
             break
     delta = after_total - before_total
+    frame_rect = _remember_frame_rect(doc, handles_before, label=size)
     result: dict[str, Any] = {
         "success": delta > 0,
         "command": "TTitleFrame",
@@ -1015,6 +1242,7 @@ def _insert_title_frame_impl(size: str, insertion: str | None, timeout: float) -
             if after_hist.get(k, 0) - before_hist.get(k, 0)
         },
         "steps": steps,
+        "frame_rect": frame_rect if "frame_rect" in dir() else None,
         "elapsed_seconds": round(time.time() - started, 2),
         "document": _safe_doc_name(doc),
     }

@@ -63,6 +63,14 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "layout":
+        if not success:
+            return f"排版失败：{raw.get('error') or '未知原因'}"
+        area = raw.get("usable_area") or []
+        return (
+            "已排版：%d 个实体缩放 %.3f 倍并移入图框，可用区域 %s。"
+            % (raw.get("entities_scaled") or 0, raw.get("scale_factor") or 0, area)
+        )
     if plan.backend == "title_info":
         if not success:
             return f"填写图框失败：{raw.get('error') or '未写入任何属性'}。"
@@ -233,6 +241,13 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "layout":
+        from . import tianzheng_runner
+
+        report = tianzheng_runner.layout_to_frame()
+        report["ok"] = bool(report.get("success"))
+        return report
 
     if backend == "title_info":
         import re as _re

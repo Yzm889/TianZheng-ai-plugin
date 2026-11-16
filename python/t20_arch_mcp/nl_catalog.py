@@ -436,6 +436,20 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="layout_frame",
+        aliases=("排版", "自动排版", "排入图框", "布图", "布局图框", "LayoutFrame"),
+        backend="layout",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="排版",
+        note=(
+            "把图框之外的所有内容整体缩放并平移到 A3 图框的可用区域内，右侧自动"
+            "留给标题栏。图框范围来自插入图框时记录的真实外框（图框由块参照+多段线"
+            "组成，单看块包围盒会偏小）。缩放会改变出图比例，结果里会报告缩放系数。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

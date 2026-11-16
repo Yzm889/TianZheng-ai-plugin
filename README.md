@@ -92,6 +92,8 @@ like a drafter would.
 | `在 4000,0 开一个宽 1800 高 1500 的窗` | 在墙上开窗 |
 | `门窗表 在 0,-3000` | 生成门窗明细表（需已有门窗） |
 | `插入 A3 图框 在 -2000,-12000` | 插入图框（A0~A4 可选） |
+| `填写图框 名称=示例住宅楼 图号=建施-01 比例=1:100` | 填写标题栏属性（24 个字段） |
+| `排版` | 把图框外的全部内容整体缩放平移进图幅（右侧留给标题栏） |
 | `在 0,0 画一根柱子` | 插入天正柱 |
 | `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
 | `画阳台 0,0 2000,0 2000,1000 0,1000` | 画阳台 |
@@ -200,9 +202,10 @@ Result (verified by entity histogram, 55 objects):
 26 of 27 succeeded on the first pass; the one failure was 轴网标注 pointed at x=8400 while the
 default grid only reaches x=4800 — after using the real axis coordinates it succeeded too.
 
-**Known limitation:** the content is drawn at its own coordinates, so it does not compose itself
-into the A3 frame (the plan sits in one corner and the tables overlap it). A layout/排版 step is
-not implemented yet.
+**Layout:** run `排版` afterwards and the whole content is scaled and moved into the frame's usable
+area (the right-hand strip is reserved for the title block). Measured: 31 entities scaled 0.44x,
+final content box exactly inside the usable area (`inside: True`). Note that scaling changes the
+plotted scale — a 9 m plan at 1:100 really is small on an A3 sheet.
 
 ## Prerequisites
 
