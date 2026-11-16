@@ -101,7 +101,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="draw_axis_grid",
-        aliases=("画轴网", "绘制轴网", "建轴网", "轴网", "轴线网", "矩形轴网", "插入轴网", "HZZW", "TRectAxis"),
+        aliases=("画轴网", "绘制轴网", "建轴网", "轴线网", "矩形轴网", "插入轴网", "HZZW", "TRectAxis"),
         backend="tianzheng",
         modes=("create",),
         command="HZZW",
@@ -162,16 +162,6 @@ SPECS: tuple[CommandSpec, ...] = (
         dialog_width_edit=2,
         note="门窗共用 MC 命令与同一个参数对话框；窗宽同样在第 3 个输入框。",
     ),
-    CommandSpec(
-        key="axis_dimension",
-        aliases=("轴网标注", "标注轴号", "轴线标注", "标轴号", "ZWBZ", "TMultAxisDim"),
-        backend="unsupported",
-        modes=("create",),
-        command="ZWBZ",
-        verify_type="TCH_AXIS_LABEL",
-        example="标注轴号",
-        note="该命令完全依赖对话框选轴，无法用固定命令行序列可靠驱动。",
-    ),
     # Additional object families confirmed in the real install's
     # SYS\createobjcmd.ini.  Their creation is interactive (points/picks), so an
     # unverified command-line sequence must never be sent as if it were reliable.
@@ -194,6 +184,28 @@ SPECS: tuple[CommandSpec, ...] = (
             "实测：先用边界点生成闭合多段线，再执行 TSlab，"
             "用选择关键字 L 选中该多段线（无需鼠标拾取），"
             "两个回车跳过「不可见边」和「洞口」，最后回车或输入板厚。"
+        ),
+    ),
+    CommandSpec(
+        key="annotate_axis",
+        aliases=("轴网标注", "标注轴网", "标注轴线", "轴线标注", "轴号标注", "ZWBZ", "TMultAxisDim"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="ZWBZ",
+        verify_type="TCH_AXIS_LABEL",
+        input_template=("{start_axis}", "", "{end_axis}", "", "", ""),
+        params=(
+            ParamSpec("start_axis", "point", hint="第一条轴线上的点，例如 0,1000"),
+            ParamSpec("end_axis", "point", hint="最后一条轴线上的点，例如 4800,1000"),
+        ),
+        example="轴网标注 0,1000 4800,1000",
+        unstable=True,
+        note=(
+            "部分可用，对时序敏感。手工逐条读提示时可稳定生成 TDbAxisLabelSet(轴号) 与 "
+            "TDbDimension2(轴间尺寸)；但用固定节奏批量发送时曾多次未生成任何对象，"
+            "原因未定位（疑与 Tianzheng 的拾取节拍/前一次命令残留有关）。"
+            "提示链：请选择起始轴线 → 是否该对象[Y] → 请选择终止轴线 → 是否该对象[Y] → "
+            "请选择不需要标注的轴线(回车) → 回车结束。两个点必须落在真实轴线上。"
         ),
     ),
     CommandSpec(

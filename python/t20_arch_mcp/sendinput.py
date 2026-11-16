@@ -236,6 +236,38 @@ def descendants(hwnd: int) -> list[int]:
     return out
 
 
+def allow_click_to_focus() -> bool:
+    """Whether we may click once into the drawing area to move the keyboard there.
+
+    MEASURED: AutoCAD can have the window focused while the keyboard still goes to
+    a Tianzheng docked panel instead of the drawing view -- then every typed
+    coordinate is swallowed and the command looks like it "did nothing". A single
+    click inside the drawing area fixes it, and doing it while no command is
+    running is harmless. Set T20_CLICK_TO_FOCUS=0 to disable.
+    """
+    raw = os.environ.get("T20_CLICK_TO_FOCUS", "").strip().lower()
+    return raw not in ("0", "false", "no", "off")
+
+
+def focus_drawing_view(hwnd: int) -> bool:
+    """Click once inside the drawing area so typed keys reach the command line."""
+    if not allow_click_to_focus():
+        return False
+    try:
+        rect = window_rect(hwnd)  # client area in screen coords
+        if not rect:
+            return False
+        left, top, right, bottom = rect
+        # Aim low-centre: that is inside the drawing view and away from palettes,
+        # the ribbon and the command line.
+        x = (left + right) // 2
+        y = top + int((bottom - top) * 0.62)
+        click(x, y, settle=0.25)
+        return True
+    except Exception:
+        return False
+
+
 def post_escape(hwnd: int, times: int = 2) -> int:
     """Post ESC to a window and all its descendants -- no focus required.
 

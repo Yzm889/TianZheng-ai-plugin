@@ -347,6 +347,18 @@ def _run_with_dialog_impl(
     # characters do not). So if this process cannot take the foreground, typing
     # would silently do nothing and the command would hang. Fail loudly instead,
     # because a silent no-op is far harder to diagnose than a clear message.
+    # Move the keyboard into the drawing view BEFORE any command starts.
+    #
+    # MEASURED: the AutoCAD window can be foreground while the keyboard focus sits
+    # on a Tianzheng docked panel; typed coordinates are then swallowed and the
+    # command silently does nothing (this is what made 轴网 look unreliable). One
+    # click inside the drawing area, while no command is running, fixes it and is
+    # harmless. Disable with T20_CLICK_TO_FOCUS=0.
+    try:
+        sendinput.focus_drawing_view(int(app.HWND))
+    except Exception:
+        pass
+
     focus_ready = False
     try:
         focus_ready = sendinput.ensure_focus(int(app.HWND), attempts=3, settle=0.3)

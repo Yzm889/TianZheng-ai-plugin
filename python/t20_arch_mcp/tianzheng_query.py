@@ -38,6 +38,11 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "TDBWALL": ("TCH_WALL", "TDBWALL", "TDbWall"),
     "TCH_OPENING": ("TCH_OPENING", "TDBOPENING", "TDbOpening", "TCH_DOOR", "TCH_WINDOW"),
     "TCH_CORNER_WINDOW": ("TCH_CORNER_WINDOW", "TDBOPENING", "TDbOpening"),
+    # ZWBZ (轴网标注) reports its axis-number object as TDbAxisLabelSet, while the
+    # documented class is TCH_AXIS_LABEL.
+    "TCH_AXIS_LABEL": ("TCH_AXIS_LABEL", "TDBAXISLABELSET", "TDbAxisLabelSet"),
+    # Dimensions created by ZWBZ come back as TDbDimension2.
+    "TCH_DIMENSION2": ("TCH_DIMENSION2", "TDBDIMENSION2", "TDbDimension2"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is
