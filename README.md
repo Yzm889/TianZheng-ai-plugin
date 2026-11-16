@@ -152,6 +152,58 @@ Then **fully quit and reopen DSH**. Tools appear as `mcp__t20_arch__*`.
 The launcher finds a Python that already has `pywin32` and `mcp`, or builds a private
 venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
 
+
+## End-to-end example (27 instructions, all measured)
+
+A complete A3 sheet built entirely from instructions on one drawing:
+
+```
+在 0,0 画轴网
+轴网标注 0,900 4800,900
+画墙 0,0 9000,0 9000,6600 0,6600 0,0
+从 0,3000 到 9000,3000 画一堵墙
+从 5000,3000 到 5000,6600 画一堵墙
+在 1500,0 开一个宽 1000 高 2100 的门
+在 2000,3000 开一个宽 900 高 2100 的门
+在 6500,0 开一个宽 1800 高 1500 的窗
+在 9000,4500 开一个宽 1200 高 1500 的窗
+在 5800,3600 到 8600,6200 画一部楼梯
+画阳台 0,0 2000,0 2000,1200 0,1200
+画楼板 0,0 9000,0 9000,6600 0,6600，板厚 120
+搜索房间，标注位置 3000,1500
+快速标注 0,-1500
+墙厚标注 0,-600 0,1200
+标高标注 4500,-2500
+图名标注 4500,-4200
+剖切符号 4500,7200 4500,8400
+索引图名 10000,-2500
+剖切索引 4500,7200 1200,7200 4500,8600
+箭头引注 3000,-900 3000,-1500
+引出标注 6500,3000 7600,3900 7600,4100
+多行文字 施工说明 在 10000,-4000
+门窗表 在 10500,3000
+新建表格 10500,0
+插入 A3 图框 在 -3000,-11000
+填写图框 名称=示例住宅楼 图号=建施-01 图别=建筑施工图 比例=1:100 设计=张工 日期=2026
+```
+
+Result (verified by entity histogram, 55 objects):
+
+```
+10 TDBWALL · 4 TDBOPENING · 2 TDBLINESTAIR · 2 TDBBALCONY · 1 TDBSLAB
+5 TDBSPACE · 7 TDBDIMENSION2 · 1 TDBAXISLABELSET · 8 axis LINE
+1 TDBSYMBELEVATION · 1 TDBDRAWINGNAME · 1 TDBSYMBSECTION
+1 TDBSYMBDRAWINGINDEX · 1 TDBSYMBINDEXPOINTER · 1 TDBSYMBARROW
+1 TDBSYMBMULTILEADER · 2 TDBSHEET · 1 TDBMTEXT · 2 BLOCKREFERENCE(图框)
+```
+
+26 of 27 succeeded on the first pass; the one failure was 轴网标注 pointed at x=8400 while the
+default grid only reaches x=4800 — after using the real axis coordinates it succeeded too.
+
+**Known limitation:** the content is drawn at its own coordinates, so it does not compose itself
+into the A3 frame (the plan sits in one corner and the tables overlap it). A layout/排版 step is
+not implemented yet.
+
 ## Prerequisites
 
 - **Windows** (COM + Win32 input simulation are Windows-only)
