@@ -450,6 +450,56 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="section_wall",
+        aliases=("画剖面墙", "剖面墙", "sdwall"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="sdwall",
+        verify_type="LINE",
+        input_template=("{p1}", "{p2}", ""),
+        params=(
+            ParamSpec("p1", "point", hint="墙起点，例如 50000,0"),
+            ParamSpec("p2", "point", hint="墙下一点，例如 50000,3000"),
+        ),
+        example="画剖面墙 50000,0 50000,3000",
+        note=(
+            "实测：sdwall → 墙起点 → 直墙下一点 → 回车结束，生成双线（LINE）。"
+            "剖面类对象在天正里就是普通线段。墙厚提示默认左 120 / 右 240。"
+        ),
+    ),
+    CommandSpec(
+        key="section_floor",
+        aliases=("双线楼板", "剖面楼板", "sdfloor"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="sdfloor",
+        verify_type="LINE",
+        input_template=("{p1}", "{p2}", "{thickness}"),
+        params=(
+            ParamSpec("p1", "point", hint="楼板起始点，例如 50000,0"),
+            ParamSpec("p2", "point", hint="楼板结束点，例如 58000,300"),
+            ParamSpec("thickness", "number", required=False, hint="板厚，默认 200", minimum=1),
+        ),
+        example="双线楼板 50000,0 58000,300，板厚 200",
+        note=(
+            "实测：sdfloor → 起始点 → 结束点 → 板厚（回车用默认 200），生成双线（LINE）。"
+        ),
+    ),
+    CommandSpec(
+        key="layout_template",
+        aliases=("套版", "模板排版", "分区排版", "模板布图", "LayoutTemplate"),
+        backend="layout_template",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="套版",
+        note=(
+            "分区排版：左侧约 2/3 为平面区，图框外的墙/门窗/标注整体缩放后排入；"
+            "右侧为表格与说明区，门窗表、多行文字按**原尺寸**依次堆叠（不缩放），"
+            "右下留给标题栏。相比“排版”的整体等比缩放，套版更适合正式出图。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

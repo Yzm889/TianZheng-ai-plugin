@@ -795,6 +795,215 @@ def _verify_position_impl(world_x: float, world_y: float, timeout: float) -> dic
     return report
 
 
+def layout_template(plan_ratio: float = 0.66, margin: float = 0.05,
+                    title_reserve: float = 0.22, gap_ratio: float = 0.04,
+                    timeout: float = 150.0) -> dict[str, Any]:
+    """模板排版: place the plan, schedules and notes into fixed zones of the sheet.
+
+    Unlike 排版 (which scales everything uniformly), this keeps schedules and text at
+    their own size and only scales the plan, then arranges:
+        left  plan_ratio of the usable width  -> plan group (walls, openings, dims...)
+        right remainder                       -> schedules stacked, notes below them
+    """
+    return _com(_layout_template_impl, float(plan_ratio), float(margin),
+                float(title_reserve), float(gap_ratio), float(timeout),
+                timeout=float(timeout) + 240.0)
+
+
+def _layout_template_impl(plan_ratio: float, margin: float, title_reserve: float,
+                          gap_ratio: float, timeout: float) -> dict[str, Any]:
+    from win32com.client import CastTo, VARIANT
+    import pythoncom
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    def bbox_of(ents):
+        minx = miny = 1e18
+        maxx = maxy = -1e18
+        for ent in ents:
+            try:
+                mn, mx = ent.GetBoundingBox()
+            except Exception:
+                continue
+            minx, miny = min(minx, float(mn[0])), min(miny, float(mn[1]))
+            maxx, maxy = max(maxx, float(mx[0])), max(maxy, float(mx[1]))
+        if minx > maxx:
+            return None
+        return (minx, miny, maxx, maxy)
+
+    frames, plans, sheets, notes = [], [], [], []
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        count = 0
+    for i in range(count):
+        try:
+            ent = doc.ModelSpace.Item(i)
+        except Exception:
+            continue
+        name = ""
+        try:
+            name = _object_name(ent).upper()
+        except Exception:
+            continue
+        is_frame = False
+        try:
+            if "BLOCK" in name:
+                br = CastTo(ent, "IAcadBlockReference")
+                if br.HasAttributes and "TITLEBLK" in str(br.Name).upper().replace("$", ""):
+                    is_frame = True
+        except Exception:
+            is_frame = False
+        if is_frame:
+            frames.append(ent)
+        elif "SHEET" in name:
+            sheets.append(ent)
+        elif "MTEXT" in name:
+            notes.append(ent)
+        else:
+            plans.append(ent)
+
+    if not frames:
+        return {"success": False, "error": "没有找到图框。请先执行：插入 A3 图框 在 <点>"}
+    if not plans:
+        return {"success": False, "error": "图框之外没有平面内容可排版。"}
+
+    frame_box = bbox_of(frames)
+    try:
+        import json as _json
+
+        saved = _json.loads(_frame_state_path().read_text(encoding="utf-8"))
+        recorded = (float(saved["x0"]), float(saved["y0"]),
+                    float(saved["x1"]), float(saved["y1"]))
+        if frame_box:
+            frame_box = (min(frame_box[0], recorded[0]), min(frame_box[1], recorded[1]),
+                         max(frame_box[2], recorded[2]), max(frame_box[3], recorded[3]))
+        else:
+            frame_box = recorded
+    except Exception:
+        pass
+    if not frame_box:
+        return {"success": False, "error": "无法取得图框范围。"}
+
+    fx0, fy0, fx1, fy1 = frame_box
+    fw, fh = fx1 - fx0, fy1 - fy0
+    ux0 = fx0 + fw * margin
+    uy0 = fy0 + fh * margin
+    ux1 = fx1 - fw * (margin + title_reserve)
+    uy1 = fy1 - fh * margin
+    uw, uh = ux1 - ux0, uy1 - uy0
+    if uw <= 0 or uh <= 0:
+        return {"success": False, "error": "可用区域为负，检查 margin / title_reserve。"}
+
+    plan_x1 = ux0 + uw * plan_ratio
+    plan_zone = (ux0, uy0, plan_x1, uy1)
+    side_zone = (plan_x1 + uw * gap_ratio, uy0, ux1, uy1)
+
+    result: dict[str, Any] = {
+        "success": False,
+        "frame": [round(v, 1) for v in frame_box],
+        "plan_zone": [round(v, 1) for v in plan_zone],
+        "side_zone": [round(v, 1) for v in side_zone],
+        "counts": {"plan": len(plans), "sheets": len(sheets), "notes": len(notes)},
+    }
+
+    # ---- 1) scale + centre the plan group inside its zone -------------------
+    plan_box = bbox_of(plans)
+    if not plan_box:
+        return {"success": False, "error": "平面内容没有有效包围盒。"}
+    px0, py0, px1, py1 = plan_box
+    pw, ph = px1 - px0, py1 - py0
+    zw, zh = plan_zone[2] - plan_zone[0], plan_zone[3] - plan_zone[1]
+    if pw <= 0 or ph <= 0:
+        return {"success": False, "error": "平面包围盒无效。"}
+
+    factor = min(zw / pw, zh / ph)
+    base = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (px0, py0, 0.0))
+    scaled = 0
+    for ent in plans:
+        try:
+            ent.ScaleEntity(base, factor)
+            scaled += 1
+        except Exception:
+            pass
+
+    new_w, new_h = pw * factor, ph * factor
+    dx = (plan_zone[0] + (zw - new_w) / 2.0) - px0
+    dy = (plan_zone[1] + (zh - new_h) / 2.0) - py0
+    dest = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (px0 + dx, py0 + dy, 0.0))
+    for ent in plans:
+        try:
+            ent.Move(base, dest)
+        except Exception:
+            pass
+
+    plan_after = bbox_of(plans)
+    result["plan_scale"] = round(factor, 4)
+    result["plan_entities_scaled"] = scaled
+    result["plan_box_after"] = [round(v, 1) for v in plan_after] if plan_after else None
+
+    # ---- 2) stack schedules, then notes, at their own scale ----------------
+    def stack(ents, top_y):
+        """Move a group so its top edge sits at top_y, left-aligned in the side zone.
+
+        A schedule is kept at its own size when it fits; when it is wider than the
+        side column it is scaled down just enough to fit (measured: the 门窗表 is
+        20000 units wide while the column is ~8500, so it overflowed the frame).
+        """
+        box = bbox_of(ents)
+        if not box:
+            return top_y, None
+        gx0, gy0, gx1, gy1 = box
+        gw, gh = gx1 - gx0, gy1 - gy0
+        zone_w = side_zone[2] - side_zone[0]
+        if gw > zone_w and gw > 0:
+            f = (zone_w / gw) * 0.98
+            b0 = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (gx0, gy0, 0.0))
+            for ent in ents:
+                try:
+                    ent.ScaleEntity(b0, f)
+                except Exception:
+                    pass
+            box = bbox_of(ents)
+            if box:
+                gx0, gy0, gx1, gy1 = box
+                gw, gh = gx1 - gx0, gy1 - gy0
+        target_x = side_zone[0]
+        target_top = top_y
+        mv = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8,
+                     (gx0 + (target_x - gx0), gy0 + ((target_top - gh) - gy0), 0.0))
+        b = VARIANT(pythoncom.VT_ARRAY | pythoncom.VT_R8, (gx0, gy0, 0.0))
+        for ent in ents:
+            try:
+                ent.Move(b, mv)
+            except Exception:
+                pass
+        return target_top - gh - (side_zone[3] - side_zone[1]) * gap_ratio, (gw, gh)
+
+    cursor = side_zone[3]
+    placements = {}
+    if sheets:
+        cursor, sheet_size = stack(sheets, cursor)
+        placements["sheets"] = sheet_size
+    if notes:
+        cursor, note_size = stack(notes, cursor)
+        placements["notes"] = note_size
+    result["placements"] = placements
+    result["side_bottom_left"] = round(cursor, 1)
+
+    # ---- 3) verify the plan really landed inside its zone ------------------
+    if plan_after:
+        inside = (plan_after[0] >= plan_zone[0] - 1 and plan_after[1] >= plan_zone[1] - 1
+                  and plan_after[2] <= plan_zone[2] + 1 and plan_after[3] <= plan_zone[3] + 1)
+        result["plan_inside_zone"] = inside
+        result["success"] = inside and scaled > 0
+        if not inside:
+            result["error"] = "平面内容未完全落在平面区内。"
+    return result
+
+
 def layout_to_frame(margin: float = 0.06, title_reserve: float = 0.22,
                      timeout: float = 120.0) -> dict[str, Any]:
     """排版: scale and move everything into the inserted title frame.

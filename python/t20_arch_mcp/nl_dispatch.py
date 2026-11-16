@@ -63,6 +63,16 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "layout_template":
+        if not success:
+            return f"套版失败：{raw.get('error') or '未知原因'}"
+        c = raw.get("counts") or {}
+        return (
+            "已套版：平面 %d 件缩放 %.3f 倍排入左侧，门窗表 %d 件、说明 %d 件按原尺寸"
+            "排在右侧，平面落在平面区内=%s。"
+            % (c.get("plan", 0), raw.get("plan_scale") or 0, c.get("sheets", 0),
+               c.get("notes", 0), raw.get("plan_inside_zone"))
+        )
     if plan.backend == "layout":
         if not success:
             return f"排版失败：{raw.get('error') or '未知原因'}"
@@ -242,6 +252,13 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
 
+    if backend == "layout_template":
+        from . import tianzheng_runner
+
+        report = tianzheng_runner.layout_template()
+        report["ok"] = bool(report.get("success"))
+        return report
+
     if backend == "layout":
         from . import tianzheng_runner
 
@@ -289,6 +306,13 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
         )
         report["ok"] = bool(report.get("success"))
         return report
+
+    if backend == "tianzheng_custom" and plan.intent == "section_floor":
+        from . import tianzheng_runner  # noqa: F401
+
+        if not params.get("thickness"):
+            params["thickness"] = 200
+            plan.inputs = [str(params.get("p1")), str(params.get("p2")), "200"]
 
     if backend == "tianzheng_custom" and plan.intent == "annotate_elevation":
         from . import tianzheng_runner  # noqa: F401  (name is used further below)

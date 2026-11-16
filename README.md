@@ -94,10 +94,13 @@ like a drafter would.
 | `插入 A3 图框 在 -2000,-12000` | 插入图框（A0~A4 可选） |
 | `填写图框 名称=示例住宅楼 图号=建施-01 比例=1:100` | 填写标题栏属性（24 个字段） |
 | `排版` | 把图框外的全部内容整体缩放平移进图幅（右侧留给标题栏） |
+| `套版` | 分区排版：平面缩放进左侧，门窗表/说明按原尺寸排在右侧，右下留标题栏 |
 | `在 0,0 画一根柱子` | 插入天正柱 |
 | `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
 | `画阳台 0,0 2000,0 2000,1000 0,1000` | 画阳台 |
 | `画楼板 0,0 8400,0 8400,6300 0,6300，板厚 120` | 画楼板（可指定板厚） |
+| `画剖面墙 12000,0 12000,3000` | 剖面墙（双线） |
+| `双线楼板 12000,3000 14000,3200` | 剖面双线楼板（可指定板厚，默认 200） |
 
 ### 房间
 
@@ -526,3 +529,14 @@ MIT — see [LICENSE](LICENSE).
 AutoCAD is a registered trademark of Autodesk, Inc. 天正建筑 is a product of
 北京天正工程软件有限公司 (Tangent). This is an independent interoperability tool,
 not affiliated with or endorsed by either company.
+
+### 24. `Move` takes a destination point, not a displacement
+`entity.Move(BasePoint, DestinationPoint)` expects an ABSOLUTE destination. Passing a
+displacement moved everything by `(dx - base.x, dy - base.y)` and pushed the laid-out
+content outside the frame. The layouter now always passes `base + delta`.
+
+### 25. The title frame is a block reference PLUS polylines
+Reading only the block's bounding box gave 7000x40000 for a sheet that is really about
+42000x40500, so the first layout attempt scaled the drawing to 0.11 and threw it out of
+the frame. The plugin now records the union bbox of the entities created during
+`插入图框` (handle diff) into `~/.t20_arch_mcp/frame_rect.json` and the layout uses it.
