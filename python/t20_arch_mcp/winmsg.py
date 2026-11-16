@@ -8,6 +8,7 @@ AutoCAD rejects COM calls with RPC_E_CALL_REJECTED.
 from __future__ import annotations
 
 import ctypes
+import time
 from ctypes import wintypes
 
 user32 = ctypes.WinDLL("user32", use_last_error=True)
@@ -107,4 +108,144 @@ def describe_ui(pid: int) -> dict:
         "tianzheng_panels": panels,
         "has_blocking_dialog": bool(dialogs),
         "window_count": len(wins),
+    }
+
+
+# --------------------------------------------------------------------------- #
+# Command-line progress probe
+# --------------------------------------------------------------------------- #
+_TEXT_HWND_CACHE: dict[int, int] = {}
+WM_GETTEXTLENGTH = 0x000E
+
+
+def _text_window_hwnd(pid: int) -> int | None:
+    """Locate (and cache) the edit control inside AutoCAD's F2 text window."""
+    cached = _TEXT_HWND_CACHE.get(pid)
+    if cached:
+        try:
+            if user32.IsWindow(wintypes.HWND(cached)):
+                return cached
+        except Exception:
+            pass
+        _TEXT_HWND_CACHE.pop(pid, None)
+
+    target = None
+    for win in windows_for_pid(pid):
+        if "文本窗口" not in win["title"]:
+            continue
+        best_area, best_hwnd = -1, None
+        for hwnd in [win["hwnd"]] + descendants_of(win["hwnd"]):
+            try:
+                n = int(user32.SendMessageW(wintypes.HWND(hwnd), WM_GETTEXTLENGTH, 0, 0))
+            except Exception:
+                continue
+            if n > best_area:
+                best_area, best_hwnd = n, hwnd
+        if best_hwnd:
+            target = best_hwnd
+            break
+    if target:
+        _TEXT_HWND_CACHE[pid] = target
+    return target
+
+
+def descendants_of(hwnd: int) -> list[int]:
+    out: list[int] = []
+    _P = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+
+    def cb(h, _l):
+        out.append(int(h))
+        return True
+
+    try:
+        user32.EnumChildWindows(wintypes.HWND(hwnd), _P(cb), 0)
+    except Exception:
+        pass
+    return out
+
+
+def command_output_size(pid: int) -> int:
+    """Size of AutoCAD's command-line history text.
+
+    Growth of this number means AutoCAD printed something new (an echo, a prompt,
+    an error). Polling a single integer is far cheaper than re-reading the text,
+    so it can be used to wait for each interactive step instead of sleeping for a
+    fixed time -- which is what makes timing-sensitive Tianzheng commands reliable.
+    """
+    hwnd = _text_window_hwnd(pid)
+    if not hwnd:
+        return -1
+    try:
+        return int(user32.SendMessageW(wintypes.HWND(hwnd), WM_GETTEXTLENGTH, 0, 0))
+    except Exception:
+        return -1
+
+
+def command_tail(pid: int, chars: int = 200) -> str:
+    """Return the last `chars` characters of AutoCAD's command-line history.
+
+    Reading the text (not just its length) lets a driver branch on the *actual*
+    prompt. Measured: ZWBZ only asks "是否为该对象?[是(Y)/否(N)]" when the picked
+    point is ambiguous, so a fixed input sequence is wrong by construction.
+    """
+    hwnd = _text_window_hwnd(pid)
+    if not hwnd:
+        return ""
+    try:
+        n = int(user32.SendMessageW(wintypes.HWND(hwnd), WM_GETTEXTLENGTH, 0, 0))
+        if n <= 0:
+            return ""
+        buf = ctypes.create_unicode_buffer(n + 2)
+        user32.SendMessageW(wintypes.HWND(hwnd), 0x000D, n + 1, ctypes.byref(buf))
+        text = buf.value
+        return text[-chars:] if chars > 0 else text
+    except Exception:
+        return ""
+
+
+def wait_for_text(
+    pid: int,
+    needles: tuple[str, ...],
+    timeout: float = 8.0,
+    poll: float = 0.15,
+) -> str | None:
+    """Wait until one of `needles` appears in the command tail; return it."""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        tail = command_tail(pid, 400)
+        for needle in needles:
+            if needle in tail:
+                return needle
+        time.sleep(poll)
+    return None
+
+
+def wait_for_output(
+    pid: int,
+    previous_size: int,
+    timeout: float = 8.0,
+    poll: float = 0.12,
+    settle: float = 0.25,
+) -> dict:
+    """Block until AutoCAD's command output grows past `previous_size`."""
+    import time as _time
+
+    started = _time.time()
+    if previous_size < 0:
+        _time.sleep(settle)
+        return {"changed": True, "reason": "no-probe", "elapsed": 0.0}
+    while _time.time() - started < timeout:
+        size = command_output_size(pid)
+        if size > previous_size:
+            _time.sleep(settle)
+            return {
+                "changed": True,
+                "grew_by": size - previous_size,
+                "elapsed": round(_time.time() - started, 2),
+            }
+        _time.sleep(poll)
+    return {
+        "changed": False,
+        "elapsed": round(_time.time() - started, 2),
+        "reason": "timeout",
     }

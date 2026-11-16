@@ -54,7 +54,7 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
-    if plan.backend in ("tianzheng", "tianzheng_dialog", "tianzheng_custom"):
+    if plan.backend in ("tianzheng", "tianzheng_dialog", "tianzheng_custom", "tianzheng_annotate"):
         counts = raw.get("counts") or {}
         delta = counts.get("delta")
         detail = f"，{plan.verify_type or '模型实体总数'} +{delta}" if delta else ""
@@ -134,6 +134,32 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
             "detail": plan.note,
             "hint": "如需手动调用，可使用 run_tianzheng_command 并配合 probe_command 观察结果。",
         }
+
+    if backend == "tianzheng_annotate":
+        # Prompt-driven commands: the Y/N confirmation appears only sometimes, so
+        # a fixed input list is wrong by construction. The runner reads the real
+        # prompt after every step and decides there.
+        from . import acad_conn, env_check, tianzheng_runner
+
+        start = params.get("start_axis")
+        end = params.get("end_axis")
+        if not start or not end:
+            return {
+                "ok": False,
+                "error": "轴网标注需要两个点：起始轴线上的点和终止轴线上的点。",
+                "hint": "示例：轴网标注 0,1000 4800,1000",
+            }
+
+        def send_annotate() -> dict[str, Any]:
+            return tianzheng_runner.annotate_axis(start, end)
+
+        try:
+            return send_annotate()
+        except Exception as exc:  # noqa: BLE001
+            if not auto_create_drawing or "Refusing" not in str(exc):
+                raise
+            acad_conn.create_test_drawing(env_check.template_for_autocad(None))
+            return send_annotate()
 
     if backend == "tianzheng_custom":
         # Commands whose prompt chain needs literal tokens (selection keywords like

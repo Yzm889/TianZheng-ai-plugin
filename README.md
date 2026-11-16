@@ -79,19 +79,18 @@ venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
 - AutoCAD must run as the **same Windows user** as DSH, at the **same elevation**
 - To reuse your own Python: `setx T20_ARCH_PYTHON "E:\your-venv\Scripts\python.exe"`
 
-#### Strongly recommended: a computer-use / window-activation plugin
+#### Requirement: AutoCAD must be the FOREGROUND window for drawing commands
 
-Drawing commands (wall, door, window, column, stair, balcony, slab, room) must type
-coordinates into AutoCAD, and **Windows only delivers typed input to the foreground
-window**. This plugin never steals the foreground by design, so if AutoCAD is
-minimised or behind another window you will get a clear "click the drawing area"
-error instead of an action.
+Windows delivers `SendInput` keystrokes only to the **foreground** window, and
+`SetFocus` alone is not enough — measured: with AutoCAD behind another window the
+typed coordinates never arrived at all (the command line showed no echo), while the
+same input worked the moment AutoCAD was in front. Read-only work (query, count,
+save, cancel) does not need this.
 
-Installing a computer-use plugin (anything that can activate a window by title/PID —
-for example the `wincu` Windows Computer Use plugin) removes that friction: the agent
-can bring AutoCAD forward for the one moment it needs the keyboard and then leave the
-user's screen alone again. Read-only work (queries, counting, saving, cancelling a
-stuck command) never needs this.
+So for drawing commands the agent should first **activate the AutoCAD window**, for
+example with a computer-use plugin (`wincu` worked here: activate by window title or
+PID). The plugin itself will not steal the foreground; if AutoCAD is not in front it
+returns a clear "click the drawing area" error instead of typing into nothing.
 
 ---
 
@@ -254,7 +253,21 @@ A real ESC is only used as a last resort.
 ### 16. `TSPace` does not exist — the room command is `TUpdSpace`
 `TSPace` answers "未知命令". Use `TUpdSpace`（搜索房间）: `ALL → Enter → 标注位置点`.
 
-### 17. Pick-only commands CAN be automated with selection keywords
+### 17. Do not click the drawing area to "focus" it
+Clicking inside the drawing view while no command is running starts a **window
+selection** (`指定对角点或 [栏选(F)/圈围(WP)/圈交(CP)]`). The next typed coordinate then
+became a selection corner instead of command input, and one run even ended up
+executing `_HELP` — the modal Help dialog, which then blocked every COM call and made
+the whole bridge look dead. Focus is moved with `SetFocus` on the DirectX view window
+instead (no mouse event), and `T20_CLICK_TO_FOCUS` now defaults to off.
+
+### 18. The first keystroke after activation is often swallowed
+Typing immediately after activating a window lost the first character, so `0,0`
+arrived as `,0` and `4800,3750` as `800,3750`; Tianzheng answered 需要点或选项关键字 /
+选择无效. The fix is a short pause plus a harmless warm-up key (Shift) before the real
+text — this was the single biggest source of non-deterministic failures.
+
+### 19. Pick-only commands CAN be automated with selection keywords
 Commands that say "选择…" accept typed selection keywords, so a mouse pick is often
 avoidable:
 

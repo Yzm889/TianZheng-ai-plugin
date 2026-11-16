@@ -339,6 +339,9 @@ def _run_with_dialog_impl(
     dialog_report: dict[str, Any] | None = None
     com_error: str | None = None
     sent: list[str] = []
+    # Baseline size of the command-output text, used to detect when AutoCAD has
+    # actually answered (see the prompt-driven wait below).
+    output_mark = winmsg.command_output_size(pid) if pid else -1
 
     # The interactive points cannot be delivered without the keyboard focus.
     #
@@ -388,6 +391,10 @@ def _run_with_dialog_impl(
     try:
         _post_text(doc, command.strip() + "\n")
         sent.append(command.strip())
+        # Wait for AutoCAD to answer the command instead of guessing a delay.
+        if pid:
+            winmsg.wait_for_output(pid, output_mark, timeout=max(3.0, settle * 2),
+                                   settle=min(0.5, settle * 0.2))
     except Exception as exc:  # noqa: BLE001
         com_error = f"PostCommand failed: {exc}"
 
@@ -406,17 +413,27 @@ def _run_with_dialog_impl(
     # AutoCAD rejects PostCommand with RPC_E_CALL_REJECTED, so the points cannot
     # be posted. They must be typed like a user, which is exactly what SendInput
     # does. (A human typing "1000,0" is accepted immediately.)
+    #
+    # Waiting is prompt-driven, not fixed: after each input we wait until AutoCAD
+    # prints its next prompt. A fixed delay was the reason 轴网标注 (ZWBZ) worked
+    # when driven by hand but produced nothing in a burst -- each step needs the
+    # previous one to be fully processed first.
     for item in inputs:
-        time.sleep(settle)
         try:
-            sendinput.focus_window(int(app.HWND))
-            time.sleep(0.15)
+            mark = winmsg.command_output_size(pid) if pid else -1
             text = "" if item == "" else str(item)
-            if text:
-                sendinput.type_unicode(text)
-                time.sleep(0.1)
-            sendinput.press_key(0x0D)  # Enter
+            # type_into_window avoids the "first character is eaten by window
+            # activation" bug that corrupted every coordinate prefix.
+            sendinput.type_into_window(int(app.HWND), text, enter=True)
             sent.append(text)
+            if pid:
+                winmsg.wait_for_output(
+                    pid, mark,
+                    timeout=max(2.5, settle * 2.5),
+                    settle=min(0.45, settle * 0.2),
+                )
+            else:
+                time.sleep(settle)
         except Exception as exc:  # noqa: BLE001
             com_error = f"{com_error or ''} | input {item!r} failed: {exc}".strip(" |")
             break
@@ -487,6 +504,126 @@ def _run_with_dialog_impl(
         if not hints:
             hints.append("未新增实体：请检查输入点是否落在墙上，或命令是否需要鼠标拾取。")
         result["diagnosis"] = " ".join(hints)
+    return result
+
+
+def annotate_axis(start_point: str, end_point: str, timeout: float = 30.0) -> dict[str, Any]:
+    """轴网标注 (ZWBZ) driven by the *actual prompts* rather than a fixed script.
+
+    MEASURED: the sequence is not fixed. After a picked axis, ZWBZ asks
+    "是否为该对象?[是(Y)/否(N)]" only when the point is ambiguous, and answers
+    "选择无效, 重新选择!" when the coordinates did not land on a real axis. A fixed
+    input list is therefore wrong by construction -- it worked when driven by hand
+    (reacting to each prompt) and failed in bursts. This driver reads the command
+    line after every step and branches on it.
+    """
+    return _com(_annotate_axis_impl, str(start_point), str(end_point), float(timeout),
+                timeout=float(timeout) + 60.0)
+
+
+def _annotate_axis_impl(start_point: str, end_point: str, timeout: float) -> dict[str, Any]:
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    if not is_owned_document(doc) and not allow_foreign_document():
+        raise AcadError(
+            "Refusing to send commands to "
+            f"'{doc_name(doc, '?')}' because this server did not create it."
+        )
+
+    pid = app_process_id(app)
+    if not pid:
+        raise AcadError("Cannot resolve the AutoCAD process id (window handle unavailable).")
+
+    verify = "TCH_AXIS_LABEL"
+    before = _count_type(doc, verify)
+    prompts: list[str] = []
+    started = time.time()
+
+    try:
+        sendinput.focus_drawing_view(int(app.HWND))
+        sendinput.ensure_focus(int(app.HWND), attempts=2)
+        # Capture the output baseline BEFORE posting, otherwise the wait below can
+        # never observe growth and burns its whole timeout.
+        mark = winmsg.command_output_size(pid)
+        _post_text(doc, "ZWBZ\n")
+        winmsg.wait_for_output(pid, mark, timeout=6.0, settle=0.35)
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "command": "ZWBZ", "error": f"cannot start ZWBZ: {exc}",
+                "prompts": prompts}
+
+    def type_value(value: str, settle: float = 0.3) -> None:
+        sendinput.type_into_window(int(app.HWND), value, enter=True)
+        time.sleep(settle)
+
+    def await_any(needles: tuple[str, ...], wait: float) -> str | None:
+        hit = winmsg.wait_for_text(pid, needles, timeout=wait)
+        if hit is None:
+            prompts.append(f"await {needles} -> TIMEOUT; tail={winmsg.command_tail(pid, 120)[-90:]!r}")
+        else:
+            prompts.append(f"await {needles} -> {hit}")
+        return hit
+
+    def give_axis(point: str, next_needles: tuple[str, ...], wait: float) -> str | None:
+        """Type one axis point, then follow the prompt until the next real step.
+
+        Anchored on the prompts themselves: type only once AutoCAD is actually
+        asking, and answer the optional Y/N confirmation when (and only when) it
+        appears.
+        """
+        hit = await_any(("请选择起始轴线", "请选择终止轴线", "是否为该对象", "选择无效"), wait)
+        if hit is None or "选择无效" in (hit or ""):
+            return hit
+        if "是否为该对象" in hit:
+            type_value("")  # default = 是(Y)
+        type_value(point)
+        return await_any(next_needles + ("选择无效",), wait)
+
+    try:
+        # ZWBZ is slow to reach its first prompt (it initialises its internal Grids
+        # view first); measured >10s on a cold start, so be patient here.
+        if not await_any(("请选择起始轴线",), max(20.0, timeout * 0.7)):
+            raise AcadError("ZWBZ 未出现「请选择起始轴线」提示（可能当前没有轴网）。")
+        give_axis(start_point, ("请选择终止轴线", "是否为该对象"), max(4.0, timeout / 3))
+        give_axis(end_point, ("不需要标注", "请选择起始轴线"), max(4.0, timeout / 3))
+
+        if await_any(("不需要标注",), 1.5):
+            type_value("")  # skip excluded axes
+        # the command loops back to 起始轴线; Enter exits
+        if await_any(("请选择起始轴线",), 2.0):
+            type_value("")
+    except Exception as exc:  # noqa: BLE001
+        prompts.append(f"exception: {exc}")
+
+    terminated = terminate_active_command(app, pid)
+    try:
+        after = _count_type(doc, verify)
+    except Exception:
+        after = before
+
+    delta = after - before
+    result: dict[str, Any] = {
+        "success": delta > 0,
+        "command": "ZWBZ",
+        "verify_type": verify,
+        "start_point": start_point,
+        "end_point": end_point,
+        "counts": {"before": before, "after": after, "delta": delta},
+        "prompts": prompts,
+        "command_terminated": terminated,
+        "elapsed_seconds": round(time.time() - started, 2),
+        "document": _safe_doc_name(doc),
+    }
+    if delta <= 0:
+        joined = " ".join(prompts)
+        if "选择无效" in joined:
+            result["diagnosis"] = (
+                "天正判定点位无效：给出的两个点必须精确落在真实轴线上"
+                "（可用 list_tianzheng_entities 读取 DOTE 图层轴线的包围盒来取点）。"
+            )
+        else:
+            result["diagnosis"] = "未生成轴号集，请查看 prompts 中每一步的实际提示。"
     return result
 
 

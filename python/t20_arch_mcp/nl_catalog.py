@@ -189,11 +189,10 @@ SPECS: tuple[CommandSpec, ...] = (
     CommandSpec(
         key="annotate_axis",
         aliases=("轴网标注", "标注轴网", "标注轴线", "轴线标注", "轴号标注", "ZWBZ", "TMultAxisDim"),
-        backend="tianzheng_custom",
+        backend="tianzheng_annotate",
         modes=("create",),
         command="ZWBZ",
         verify_type="TCH_AXIS_LABEL",
-        input_template=("{start_axis}", "", "{end_axis}", "", "", ""),
         params=(
             ParamSpec("start_axis", "point", hint="第一条轴线上的点，例如 0,1000"),
             ParamSpec("end_axis", "point", hint="最后一条轴线上的点，例如 4800,1000"),
@@ -201,11 +200,11 @@ SPECS: tuple[CommandSpec, ...] = (
         example="轴网标注 0,1000 4800,1000",
         unstable=True,
         note=(
-            "部分可用，对时序敏感。手工逐条读提示时可稳定生成 TDbAxisLabelSet(轴号) 与 "
-            "TDbDimension2(轴间尺寸)；但用固定节奏批量发送时曾多次未生成任何对象，"
-            "原因未定位（疑与 Tianzheng 的拾取节拍/前一次命令残留有关）。"
-            "提示链：请选择起始轴线 → 是否该对象[Y] → 请选择终止轴线 → 是否该对象[Y] → "
-            "请选择不需要标注的轴线(回车) → 回车结束。两个点必须落在真实轴线上。"
+            "实验性：需先有轴网。提示链为 请选择起始轴线 →(可能)是否该对象[Y]→ "
+            "请选择终止轴线 →(可能)是否该对象[Y]→ 请选择不需要标注的轴线(回车)→ 回车结束。"
+            "「是否该对象」是条件出现的，且实测在自动化节奏下常拿不到稳定结果，"
+            "因此标记为实验性：失败时会直接返回错误、不再自动重试或反复取消命令。"
+            "生成物为 TDbAxisLabelSet(轴号) 与 TDbDimension2(轴间尺寸)。"
         ),
     ),
     CommandSpec(

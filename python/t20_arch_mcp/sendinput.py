@@ -237,35 +237,117 @@ def descendants(hwnd: int) -> list[int]:
 
 
 def allow_click_to_focus() -> bool:
-    """Whether we may click once into the drawing area to move the keyboard there.
+    """Click-to-focus is DISABLED by default; it was actively harmful.
 
-    MEASURED: AutoCAD can have the window focused while the keyboard still goes to
-    a Tianzheng docked panel instead of the drawing view -- then every typed
-    coordinate is swallowed and the command looks like it "did nothing". A single
-    click inside the drawing area fixes it, and doing it while no command is
-    running is harmless. Set T20_CLICK_TO_FOCUS=0 to disable.
+    MEASURED: clicking inside the drawing area to move the keyboard there makes
+    AutoCAD start a window selection ("指定对角点或 [栏选(F)/圈围(WP)/圈交(CP)]").
+    The next typed coordinate then became a selection corner instead of a command
+    input, and one run even ended up executing `_HELP` (the Help dialog, which is
+    modal and blocks every COM call). Focus is now moved with SetFocus on the
+    drawing view, which generates no mouse event at all.
     """
     raw = os.environ.get("T20_CLICK_TO_FOCUS", "").strip().lower()
-    return raw not in ("0", "false", "no", "off")
+    return raw in ("1", "true", "yes", "on")
+
+
+_VIEW_CLASS_HINTS = ("FLIP_MODE_VIEW", "ACADDM_CHILD")
+
+
+def drawing_view_window(hwnd: int) -> int | None:
+    """The DirectX drawing-view child window that receives coordinate input."""
+    best, best_area = None, 0
+    for child in descendants(hwnd):
+        try:
+            cls = ctypes.create_unicode_buffer(256)
+            user32.GetClassNameW(wintypes.HWND(child), cls, 256)
+            if not any(hint in cls.value for hint in _VIEW_CLASS_HINTS):
+                continue
+            if not user32.IsWindowVisible(wintypes.HWND(child)):
+                continue
+            rect = wintypes.RECT()
+            user32.GetWindowRect(wintypes.HWND(child), ctypes.byref(rect))
+            area = (rect.right - rect.left) * (rect.bottom - rect.top)
+            if area > best_area:
+                best, best_area = child, area
+        except Exception:
+            continue
+    return best
 
 
 def focus_drawing_view(hwnd: int) -> bool:
-    """Click once inside the drawing area so typed keys reach the command line."""
-    if not allow_click_to_focus():
-        return False
+    """Move the keyboard focus into the drawing view WITHOUT clicking.
+
+    SetFocus only works from the thread owning the window, so this attaches to that
+    thread's input queue first. No mouse event is generated, therefore no stray
+    selection point and no accidental _HELP.
+    """
     try:
-        rect = window_rect(hwnd)  # client area in screen coords
-        if not rect:
-            return False
-        left, top, right, bottom = rect
-        # Aim low-centre: that is inside the drawing view and away from palettes,
-        # the ribbon and the command line.
-        x = (left + right) // 2
-        y = top + int((bottom - top) * 0.62)
-        click(x, y, settle=0.25)
+        if not is_foreground(hwnd):
+            focus_window(hwnd)
+            time.sleep(0.2)
+    except Exception:
+        pass
+
+    view = drawing_view_window(hwnd)
+    if not view:
+        return False
+
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    try:
+        target_thread = user32.GetWindowThreadProcessId(wintypes.HWND(view), None)
+        my_thread = kernel32.GetCurrentThreadId()
+        attached = False
+        if target_thread and target_thread != my_thread:
+            attached = bool(user32.AttachThreadInput(my_thread, target_thread, True))
+        try:
+            user32.SetFocus(wintypes.HWND(view))
+        finally:
+            if attached:
+                user32.AttachThreadInput(my_thread, target_thread, False)
         return True
     except Exception:
         return False
+
+
+def is_foreground(hwnd: int) -> bool:
+    try:
+        return user32.GetForegroundWindow() == int(hwnd)
+    except Exception:
+        return False
+
+
+def type_into_window(hwnd: int, text: str, enter: bool = True) -> bool:
+    """Type into a window without losing the first character.
+
+    MEASURED: the FIRST keystroke is frequently swallowed when it is sent right
+    after a window activation or a click. That silently corrupted coordinates
+    ("0,0" arrived as ",0", "4800,3750" as "800,3750") and made Tianzheng answer
+    "需要点或选项关键字" / "选择无效" -- the single biggest source of
+    non-deterministic failures in this project.
+
+    The fix is to always pause before typing and to "warm up" the input queue with
+    a harmless key (Shift, which no AutoCAD prompt acts on) so the real characters
+    are not the first event the window sees.
+    """
+    need_focus = not is_foreground(hwnd)
+    if need_focus:
+        focus_window(hwnd)
+        time.sleep(0.4)
+    time.sleep(0.22)
+
+    # Absorb activation with a no-op keypress before the real text.
+    try:
+        press_key(0x10, settle=0.05)  # VK_SHIFT
+    except Exception:
+        pass
+    time.sleep(0.05)
+
+    if text:
+        type_unicode(text)
+        time.sleep(0.1)
+    if enter:
+        press_key(VK_RETURN)
+    return True
 
 
 def post_escape(hwnd: int, times: int = 2) -> int:
