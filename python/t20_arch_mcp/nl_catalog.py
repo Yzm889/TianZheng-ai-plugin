@@ -299,6 +299,92 @@ SPECS: tuple[CommandSpec, ...] = (
         note="实测：TDrawingName → 请点取插入位置，生成 TDbDrawingName(图名)。",
     ),
     CommandSpec(
+        key="section_mark",
+        aliases=("剖切符号", "剖切标记", "加剖切符号", "TSection"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TSection",
+        verify_type="TCH_SYMB_SECTION",
+        input_template=("{p1}", "{p2}", ""),
+        params=(
+            ParamSpec("p1", "point", hint="第一个剖切点，例如 4200,7000"),
+            ParamSpec("p2", "point", hint="第二个剖切点，例如 4200,8000"),
+        ),
+        example="剖切符号 4200,7000 4200,8000",
+        note=(
+            "实测：TSection → 点取第一个剖切点 → 点取第二个剖切点 → 点取剖视方向"
+            "（回车沿用当前方向），生成 TDbSymbSection(剖切符号)。"
+        ),
+    ),
+    CommandSpec(
+        key="drawing_index",
+        aliases=("索引图名", "索引符号", "索引标注", "TIndexDim"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TIndexDim",
+        verify_type="TCH_DRAWING_INDEX",
+        input_template=("{insertion}",),
+        params=(
+            ParamSpec("insertion", "point", hint="标注位置，例如 6000,-3000"),
+        ),
+        example="索引图名 6000,-3000",
+        note="实测：TIndexDim → 请点取标注位置，生成 TDbSymbDrawingIndex(索引图名)。",
+    ),
+    CommandSpec(
+        key="section_index",
+        aliases=("剖切索引", "剖切索引符号", "TSECTINDEX"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TSECTINDEX",
+        verify_type="TCH_SYMB_INDEX_POINTER",
+        input_template=("{node}", "{turn}", "{label_point}", ""),
+        params=(
+            ParamSpec("node", "point", hint="索引节点位置，例如 4200,7000"),
+            ParamSpec("turn", "point", hint="转折点位置，例如 1000,7000"),
+            ParamSpec("label_point", "point", hint="文字索引号位置，例如 4200,8200"),
+        ),
+        example="剖切索引 4200,7000 1000,7000 4200,8200",
+        note=(
+            "实测：TSECTINDEX → 索引节点 → 转折点 → 文字索引号位置 → 剖视方向（回车沿用当前），"
+            "生成 TDbSymbIndexPointer。"
+        ),
+    ),
+    CommandSpec(
+        key="new_sheet",
+        aliases=("新建表格", "插入表格", "表格", "TNewSheet"),
+        backend="dialog_command",
+        modes=("create",),
+        command="TNewSheet",
+        verify_type="TCH_SHEET",
+        params=(
+            ParamSpec("insertion", "point", hint="表格左上角点，例如 0,-11000"),
+        ),
+        example="新建表格 0,-11000",
+        note=(
+            "实测：TNewSheet 先弹出「新建表格」对话框（默认 4 行 4 列、行高 7、列宽 40、"
+            "名称“天正表格”），点确定后再给左上角点，生成 TDbSheet。"
+        ),
+        dialog_title="新建表格",
+    ),
+    CommandSpec(
+        key="multiline_text",
+        aliases=("多行文字", "多行文本", "段落文字", "TMText"),
+        backend="dialog_command",
+        modes=("create",),
+        command="TMText",
+        verify_type="TCH_MTEXT",
+        params=(
+            ParamSpec("text", "text", hint="文字内容，例如 备注文字"),
+            ParamSpec("insertion", "point", hint="文字左上角点，例如 13000,3000"),
+        ),
+        example="多行文字 备注文字 在 13000,3000",
+        note=(
+            "实测：TMText 弹出「多行文字」对话框（第 5 个输入框是正文），点确定后给左上角点，"
+            "生成 TDbMText。"
+        ),
+        dialog_title="多行文字",
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

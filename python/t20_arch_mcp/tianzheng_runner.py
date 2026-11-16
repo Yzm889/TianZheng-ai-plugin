@@ -921,6 +921,127 @@ def _insert_title_frame_impl(size: str, insertion: str | None, timeout: float) -
     return result
 
 
+def run_dialog_command(command: str, dialog_title: str, point: str,
+                       edit_values: dict | None = None, verify_type: str | None = None,
+                       timeout: float = 45.0) -> dict[str, Any]:
+    """Command -> modal Tianzheng dialog -> insertion point.
+
+    MEASURED pattern shared by 新建表格 (TNewSheet) and 多行文字 (TMText): the
+    command opens a #32770 dialog first; after 确定 the command still asks for a
+    top-left/insertion point. Driving only the dialog produced no entity, and
+    driving only the point never reached the command at all.
+    """
+    return _com(_run_dialog_command_impl, str(command), str(dialog_title), str(point),
+                dict(edit_values or {}), verify_type, float(timeout),
+                timeout=float(timeout) + 90.0)
+
+
+def _run_dialog_command_impl(command: str, dialog_title: str, point: str,
+                             edit_values: dict, verify_type: str | None,
+                             timeout: float) -> dict[str, Any]:
+    import time as _time
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+    pid = app_process_id(app)
+    if not pid:
+        raise AcadError("Cannot resolve the AutoCAD process id.")
+
+    before_hist = _histogram(doc)
+    before_total = sum(before_hist.values())
+    steps: list[str] = []
+
+    try:
+        sendinput.focus_drawing_view(int(app.HWND))
+        sendinput.ensure_focus(int(app.HWND), attempts=2)
+        _post_text(doc, f"{command}\n")
+        _time.sleep(2.0)
+    except Exception as exc:  # noqa: BLE001
+        return {"success": False, "command": command, "error": f"无法启动命令：{exc}"}
+
+    dlg = dialog.wait_for_dialog(pid, dialog_title, timeout=min(timeout, 12.0))
+    if not dlg:
+        return {"success": False, "command": command,
+                "error": f"未出现「{dialog_title}」对话框。", "steps": steps}
+
+    steps.append(f"dialog {dlg['title']!r}")
+    if edit_values:
+        kids = [c for c in dialog.child_controls(dlg["hwnd"])
+                if c["class"] == "Edit" and c["visible"]]
+        for idx, value in edit_values.items():
+            try:
+                idx_int = int(idx)
+            except Exception:
+                continue
+            if idx_int < len(kids):
+                dialog.set_text(kids[idx_int]["hwnd"], value)
+                steps.append(f"edit[{idx_int}] = {value!r}")
+
+    clicked = dialog.click_button_text_real(dlg["hwnd"], "确定", verify_dialog_closes=True)
+    steps.append(f"click 确定 -> {clicked.get('clicked')} closed={clicked.get('dialog_closed')}")
+    _time.sleep(1.2)
+    if dialog.dialog_visible(dlg["hwnd"]):
+        dialog.click_button_text_real(dlg["hwnd"], "取消")
+        return {"success": False, "command": command,
+                "error": "对话框没有关闭（确定未生效）。", "steps": steps}
+
+    try:
+        sendinput.type_into_window(int(app.HWND), point, enter=True)
+        steps.append(f"point {point!r}")
+        _time.sleep(1.6)
+        try:
+            sendinput.type_into_window(int(app.HWND), "", enter=True)
+            _time.sleep(1.0)
+        except Exception:
+            pass
+    finally:
+        # SAFETY: a left-open modal dialog blocks every later COM call (measured:
+        # TMText re-opened its dialog on each attempt and froze the whole bridge).
+        # Always sweep stray dialogs and end the command, success or not.
+        try:
+            for win in dialog.top_windows(pid):
+                if win["class"] == "#32770" and win["visible"]:
+                    dialog.click_button_text_real(win["hwnd"], "取消")
+                    _time.sleep(0.5)
+                    if dialog.dialog_visible(win["hwnd"]):
+                        dialog.click_button_text_real(win["hwnd"], "确定")
+        except Exception:
+            pass
+        terminate_active_command(app, pid)
+
+    after_hist = before_hist
+    after_total = before_total
+    for _ in range(8):
+        _time.sleep(0.5)
+        try:
+            after_hist = _histogram(doc)
+        except Exception:
+            continue
+        after_total = sum(after_hist.values())
+        if after_total > before_total:
+            break
+
+    delta = after_total - before_total
+    result: dict[str, Any] = {
+        "success": delta > 0,
+        "command": command,
+        "dialog": dialog_title,
+        "point": point,
+        "counts": {"before": before_total, "after": after_total, "delta": delta},
+        "type_deltas": {
+            k: after_hist.get(k, 0) - before_hist.get(k, 0)
+            for k in set(before_hist) | set(after_hist)
+            if after_hist.get(k, 0) - before_hist.get(k, 0)
+        },
+        "steps": steps,
+        "document": _safe_doc_name(doc),
+    }
+    if not result["success"]:
+        result["error"] = "命令执行完但没有生成实体。"
+    return result
+
+
 def annotate_axis(start_point: str, end_point: str, timeout: float = 30.0) -> dict[str, Any]:
     """轴网标注 (ZWBZ) driven by the *actual prompts* rather than a fixed script.
 

@@ -57,6 +57,12 @@ def _execution_hint(plan: ParseResult, raw: dict[str, Any]) -> str:
 
 
 def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
+    if plan.backend == "dialog_command":
+        if not success:
+            return f"{plan.command} 执行失败：{raw.get('error') or '未生成实体'}。"
+        deltas = raw.get("type_deltas") or {}
+        detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
+        return f"已执行 {plan.command}（{detail}）。"
     if plan.backend == "probe_position":
         if not success:
             return f"定位自检失败：{raw.get('error') or '未取得落点'}。"
@@ -219,6 +225,26 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "dialog_command":
+        from . import nl_catalog, tianzheng_runner
+
+        spec = nl_catalog.get_spec(plan.intent or "")
+        point = params.get("insertion")
+        if not point:
+            return {"ok": False, "error": f"{plan.intent} 需要一个插入点。"}
+        edits = {}
+        if plan.intent == "multiline_text" and params.get("text"):
+            edits[4] = params["text"]  # 多行文字正文在第 5 个输入框
+        report = tianzheng_runner.run_dialog_command(
+            command=plan.command or "",
+            dialog_title=(spec.dialog_title if spec else "") or "",
+            point=str(point),
+            edit_values=edits,
+            verify_type=plan.verify_type,
+        )
+        report["ok"] = bool(report.get("success"))
+        return report
 
     if backend == "tianzheng_custom" and plan.intent == "annotate_elevation":
         from . import tianzheng_runner  # noqa: F401  (name is used further below)

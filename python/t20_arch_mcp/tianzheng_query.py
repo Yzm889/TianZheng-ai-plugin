@@ -48,6 +48,13 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     # 标高符号 (TMElev) and 图名 (TDrawingName)
     "TCH_SYMBOL_ELEVATION": ("TCH_SYMBOL_ELEVATION", "TDBSYMBELEVATION", "TDbSymbElevation"),
     "TCH_DRAWINGNAME": ("TCH_DRAWINGNAME", "TDBDRAWINGNAME", "TDbDrawingName"),
+    # 剖切符号 (TSection) and 索引图名 (TIndexDim)
+    "TCH_SYMB_SECTION": ("TCH_SYMB_SECTION", "TDBSYMBSECTION", "TDbSymbSection"),
+    "TCH_DRAWING_INDEX": ("TCH_DRAWING_INDEX", "TDBSYMBDRAWINGINDEX", "TDbSymbDrawingIndex"),
+    # 剖切索引 (TSECTINDEX)
+    "TCH_SYMB_INDEX_POINTER": ("TCH_SYMB_INDEX_POINTER", "TDBSYMBINDEXPOINTER", "TDbSymbIndexPointer"),
+    # 多行文字 (TMText) -- TDbMText
+    "TCH_MTEXT": ("TCH_MTEXT", "TDBMTEXT", "TDbMText"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is

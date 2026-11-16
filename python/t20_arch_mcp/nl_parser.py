@@ -431,6 +431,11 @@ def parse(text: str) -> ParseResult:
 
         if pspec.kind == "text":
             value = _quoted_text(norm) if name == "text" else None
+            if name == "text" and value:
+                # "多行文字 备注文字 在 13000,3000" must keep only 备注文字
+                value = re.split(r"\s*在\s*-?\d", value)[0]
+                value = re.sub(r"\s*-?\d+(?:\.\d+)?\s*,\s*-?\d+(?:\.\d+)?\s*$", "", value)
+                value = value.strip(" ，,。.;；")
             if name == "layer":
                 match = _LAYER_RE.search(norm)
                 value = match.group(1) if match else pspec.default
