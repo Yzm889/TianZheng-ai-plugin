@@ -136,13 +136,24 @@ def check_writable_files(root: str) -> dict[str, Any]:
     which makes Tianzheng show the modal "打不开DataStore.dbf文件！" dialog and
     abort HZQT.
     """
-    locations = (root, os.path.join(root, "SYS"))
+    # The per-version sysXXx64 folder is what T20 actually loads at runtime,
+    # so it is the most important location - a read-only copy there shows the
+    # "打不开DataStore.dbf文件！" dialog even when root/SYS copies are writable.
+    locations: list[tuple[str, str]] = [
+        (root, "install_root"),
+        (os.path.join(root, "SYS"), "SYS"),
+    ]
+    for folder in VERSION_DIRS:
+        path = os.path.join(root, folder)
+        if os.path.isdir(path):
+            locations.append((path, "version_dir"))
+
     results: list[dict[str, Any]] = []
     problems: list[str] = []
 
     for name in CRITICAL_WRITABLE:
         found = False
-        for location in locations:
+        for location, scope in locations:
             path = os.path.join(location, name)
             if not os.path.isfile(path):
                 continue
@@ -151,7 +162,7 @@ def check_writable_files(root: str) -> dict[str, Any]:
             results.append({
                 "file": name,
                 "path": path,
-                "scope": "install_root" if location == root else "SYS",
+                "scope": scope,
                 "exists": True,
                 "writable": writable,
                 "size": os.path.getsize(path),

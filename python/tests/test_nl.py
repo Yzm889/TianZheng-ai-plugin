@@ -214,26 +214,35 @@ class TestRealInstallAlignment(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as root:
             sys_dir = os.path.join(root, "SYS")
+            ver_dir = os.path.join(root, "sys22x64")
             os.mkdir(sys_dir)
+            os.mkdir(ver_dir)
             root_ds = os.path.join(root, "DataStore.dbf")
+            ver_ds = os.path.join(ver_dir, "DataStore.dbf")
             paths = [
                 root_ds,
                 os.path.join(root, "tchdata.dbf"),
                 os.path.join(sys_dir, "DataStore.dbf"),
                 os.path.join(sys_dir, "tchdata.dbf"),
+                ver_ds,
+                os.path.join(ver_dir, "tchdata.dbf"),
             ]
             for path in paths:
                 with open(path, "wb") as handle:
                     handle.write(b"x")
             os.chmod(root_ds, stat.S_IREAD)
+            os.chmod(ver_ds, stat.S_IREAD)
             try:
                 report = env_check.check_writable_files(root)
                 self.assertTrue(report["blocking_issue"])
                 self.assertIn(root_ds, report["readonly_files"])
-                self.assertTrue(any(f["scope"] == "install_root" for f in report["files"]))
-                self.assertTrue(any(f["scope"] == "SYS" for f in report["files"]))
+                # The version folder is what T20 really loads at runtime.
+                self.assertIn(ver_ds, report["readonly_files"])
+                for scope in ("install_root", "SYS", "version_dir"):
+                    self.assertTrue(any(f["scope"] == scope for f in report["files"]))
             finally:
                 os.chmod(root_ds, stat.S_IWRITE | stat.S_IREAD)
+                os.chmod(ver_ds, stat.S_IWRITE | stat.S_IREAD)
 
 
 class TestCatalogConsistency(unittest.TestCase):

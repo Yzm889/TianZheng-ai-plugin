@@ -45,10 +45,12 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   dispatcher reported real successes as `ok: false`. Success is now inferred
   from the payload shape; explicit false still wins. Found in live CAD testing.
 - **Environment diagnosis missed the real blocker**: `DataStore.dbf` and
-  `tchdata.dbf` exist at BOTH the Tianzheng install root and under `SYS`, but
-  only `SYS` was checked. On the actual T20 V10 install the root copy of
-  `DataStore.dbf` is read-only, which triggers the modal abort dialog. Both
-  locations are now checked and each remedy command names the exact file.
+  `tchdata.dbf` exist at THREE levels - install root, `SYS`, and the active
+  version folder (`sysXXx64`). The version folder is what T20 actually loads;
+  its copies being read-only produced the "打不开DataStore.dbf文件！" dialog
+  even after the root/SYS copies were fixed. All version folders are now
+  checked, and every remedy names the exact file. Live-verified: clearing all
+  six files' read-only attribute removed the dialog on a Tianzheng command.
 
 ### Known limitations
 
