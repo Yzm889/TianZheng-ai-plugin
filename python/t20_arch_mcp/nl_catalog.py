@@ -400,6 +400,42 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="arrow_note",
+        aliases=("箭头引注", "箭头标注", "加箭头", "TArrow"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TArrow",
+        verify_type="TCH_SYMB_ARROW",
+        input_template=("{start}", "{end}", ""),
+        params=(
+            ParamSpec("start", "point", hint="箭头起点，例如 4200,-1000"),
+            ParamSpec("end", "point", hint="箭杆下一点，例如 4200,-1600"),
+        ),
+        example="箭头引注 4200,-1000 4200,-1600",
+        note=(
+            "实测：TArrow → 箭头起点 → 直段下一点 → 回车结束，生成 TDbSymbArrow。"
+        ),
+    ),
+    CommandSpec(
+        key="leader_note",
+        aliases=("引出标注", "引线标注", "标注引线", "TLeader"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TLeader",
+        verify_type="TCH_SYMB_MULTILEADER",
+        input_template=("{p1}", "{p2}", "{text_point}", ""),
+        params=(
+            ParamSpec("p1", "point", hint="标注第一点，例如 14000,3000"),
+            ParamSpec("p2", "point", hint="引线位置，例如 15000,4000"),
+            ParamSpec("text_point", "point", hint="文字基线位置，例如 15000,4200"),
+        ),
+        example="引出标注 14000,3000 15000,4000 15000,4200",
+        note=(
+            "实测：TLeader → 标注第一点 → 输入引线位置 → 点取文字基线位置 → 回车结束，"
+            "生成 TDbSymbMultileader。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

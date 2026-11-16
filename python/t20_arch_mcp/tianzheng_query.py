@@ -55,6 +55,9 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     "TCH_SYMB_INDEX_POINTER": ("TCH_SYMB_INDEX_POINTER", "TDBSYMBINDEXPOINTER", "TDbSymbIndexPointer"),
     # 多行文字 (TMText) -- TDbMText
     "TCH_MTEXT": ("TCH_MTEXT", "TDBMTEXT", "TDbMText"),
+    # 箭头引注 (TArrow) and 引出标注 (TLeader)
+    "TCH_SYMB_ARROW": ("TCH_SYMB_ARROW", "TDBSYMBARROW", "TDbSymbArrow"),
+    "TCH_SYMB_MULTILEADER": ("TCH_SYMB_MULTILEADER", "TDBSYMBMULTILEADER", "TDbSymbMultileader"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is
