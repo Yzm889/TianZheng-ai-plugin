@@ -77,14 +77,14 @@ class TestNaturalLanguageParsing(unittest.TestCase):
         self.assertNotIn("layer", plan.params)
         self.assertTrue(plan.ok)
 
-    def test_axis_grid_is_flagged_unstable_with_reason(self):
-        # Re-measured on T30-Arch V2.0: the SAME HZZW command takes two different
-        # branches depending on Tianzheng's axis-data state -- "请选择插入点" (which
-        # works and draws DOTE lines) or "PC2T20 选择需要转化的图元" (which needs an
-        # entity selection and ignores coordinates). Since the branch cannot be
-        # chosen from the command line, the intent must stay flagged as unstable.
+    def test_axis_grid_is_verified_with_documented_caveat(self):
+        # Measured on T30-Arch V2.0: HZZW → 请选择插入点 works and draws the axes
+        # as LINEs on the DOTE layer (verified by a live count delta), so it is no
+        # longer flagged unstable. An alternate "PC2T20 选择需要转化的图元" branch
+        # was observed once and is documented in the note rather than treated as
+        # the normal path.
         plan = nl_parser.parse("在 0,0 画轴网")
-        self.assertTrue(plan.unstable)
+        self.assertFalse(plan.unstable)
         self.assertEqual(plan.command, "HZZW")
         self.assertEqual(plan.inputs, ["0,0", ""])
         self.assertIn("PC2T20", plan.note)

@@ -4,6 +4,31 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.4.1] — 2026-11-17
+
+### Fixed
+
+- **A real ESC keystroke could abort the agent's desktop session.** Cancelling a
+  pending CAD command used to type a real ESC via `SendInput`. If a computer-use
+  plugin binds **Esc to its own "stop" shortcut**, that keystroke is read as "user
+  stopped the agent" — measured twice, and it looked exactly like the user hitting
+  stop. Cancellation now posts ESC as window messages (`post_escape`), which needs
+  no foreground, produces no real keystroke, and cannot trip a global hotkey; a real
+  ESC is only the last resort.
+
+### Changed
+
+- **轴网 `HZZW` corrected back to ✅.** The earlier "conditional" verdict was wrong:
+  the failing runs were being rejected by the focus guard, not by Tianzheng's
+  `PC2T20` branch. With the keyboard focused, `HZZW → 请选择插入点 → (x,y)` creates
+  the grid as `DOTE` lines. The `PC2T20` branch was observed once and is now
+  documented as a caveat instead of being treated as the normal path.
+
+### Verified
+
+13/13 end-to-end — 轴网 · 闭合墙体 · 楼板 · 房间 · 柱 · 门 · 窗 · 楼梯 · 阳台 ·
+天正文字 · 线 · 圆 · 统计.
+
 ## [0.4.0] — 2026-11-17
 
 Two more Tianzheng objects become automatable, and the parser stops losing input.

@@ -162,15 +162,15 @@ def terminate_active_command(app: Any, pid: int, attempts: int = 3) -> dict[str,
         report["attempts"] = i + 1
         if hwnd:
             try:
-                # Preferred: a real keystroke, but only if we can hold the focus.
-                if sendinput.ensure_focus(hwnd, attempts=1, settle=0.2):
-                    sendinput.send_escape(2)
-                    report["method"] = "SendInput"
-                else:
-                    # Focus is unavailable (background agent): post the key
-                    # messages straight to the drawing view windows instead.
-                    targets = sendinput.post_escape(hwnd, 2)
-                    report["method"] = f"PostMessage->{targets} windows"
+                # Prefer window messages: posting ESC needs no foreground and
+                # produces no real keystroke. That matters beyond focus -- a
+                # computer-use helper (e.g. a desktop-automation plugin) may bind
+                # Esc to its own "stop" shortcut, so a SendInput ESC silently
+                # aborts the agent's desktop session. Measured: two runs were
+                # killed exactly this way. Only fall back to SendInput if posting
+                # does not take effect.
+                targets = sendinput.post_escape(hwnd, 2)
+                report["method"] = f"PostMessage->{targets} windows"
             except Exception:
                 pass
         if not report.get("method"):
@@ -187,6 +187,21 @@ def terminate_active_command(app: Any, pid: int, attempts: int = 3) -> dict[str,
                 return report
         except Exception:
             continue
+        # Still busy: now try a real keystroke (only if nothing else worked).
+        if hwnd and i == attempts - 1:
+            try:
+                if sendinput.ensure_focus(hwnd, attempts=1, settle=0.2):
+                    sendinput.send_escape(2)
+                    report["method"] = "SendInput"
+            except Exception:
+                pass
+            time.sleep(0.8)
+            try:
+                if app.GetAcadState().IsQuiescent:
+                    report["quiescent"] = True
+                    return report
+            except Exception:
+                pass
 
     # Final attempt: post ESC again before giving up on quiescence.
     if hwnd:

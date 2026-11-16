@@ -33,7 +33,7 @@ Every row below was confirmed by an actual entity-count increase in a live drawi
 |---|---|---|---|
 | 墙体 wall | `HZQT` | `TDbWall` | ✅ |
 | 门窗 door / window | `MC` | `TDbOpening` | ✅ |
-| 轴网 axis grid | `HZZW` | 12 axes, `LINE` on `DOTE` | ⚠️ 条件性 |
+| 轴网 axis grid | `HZZW` | 8–12 axes, `LINE` on `DOTE` | ✅ |
 | 柱子 column | `TGColumn` | `TDbColumn` | ✅ |
 | 楼梯 stair | `TLStair` | `TDbLineStair` | ✅ |
 | 阳台 balcony | `TBalcony` | `TDbBalcony` | ✅ |
@@ -230,14 +230,31 @@ interrupting a running game. The behaviour is now:
 
 Reading the drawing, counting entities, and cancelling commands never need focus.
 
-### 13. `HZZW` has two branches and only one is automat-able
-The same `HZZW` runs either `请选择插入点` (point input works, grid comes from
-Tianzheng's stored axis data) or `PC2T20 选择需要转化的图元` (it wants you to select
-entities to convert, so typed coordinates do nothing). Which branch you get depends
-on Tianzheng's axis-data state, not on anything the command line can set — so axis
-grid creation is reported as conditional rather than guaranteed.
+### 13. `HZZW` normally works, but has a second branch to watch for
+Measured working chain: `HZZW → 请选择插入点 → (x,y)` creates the grid as `LINE`s on
+the `DOTE` layer. One run instead produced `PC2T20 选择需要转化的图元` ("select the
+entities to convert"), where coordinates are ignored — that branch depends on
+Tianzheng's axis-data state and cannot be selected from the command line. If it
+appears, open 天正「绘制轴网」once, confirm the axis data, then retry.
 
-### 14. Pick-only commands CAN be automated with selection keywords
+### 14. A wall loop must be closed with `C`, not by repeating the first point
+`画墙 0,0 8000,0 8000,6000 0,6000 0,0` looks closed but is not: the repeated final
+point draws a zero-length segment, the loop stays open (3 walls instead of 4), and a
+later `搜索房间` silently finds no enclosed area. Use Tianzheng's `闭合(C)` option.
+The parser now recognises a repeated final point and emits `C` automatically.
+
+### 15. A real ESC keystroke can collide with desktop-automation hotkeys
+Cancelling a pending command used to send a real ESC via `SendInput`. If a
+computer-use plugin binds **Esc to its own "stop" shortcut**, that keystroke aborts
+the agent's desktop session instead of cancelling the CAD command — measured twice.
+Cancellation now posts ESC as window messages (`post_escape`), which needs no
+foreground, produces no real keystroke, and therefore cannot trip a global hotkey.
+A real ESC is only used as a last resort.
+
+### 16. `TSPace` does not exist — the room command is `TUpdSpace`
+`TSPace` answers "未知命令". Use `TUpdSpace`（搜索房间）: `ALL → Enter → 标注位置点`.
+
+### 17. Pick-only commands CAN be automated with selection keywords
 Commands that say "选择…" accept typed selection keywords, so a mouse pick is often
 avoidable:
 
