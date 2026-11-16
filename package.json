@@ -1,0 +1,45 @@
+{
+  "name": "dsh-t20-arch",
+  "version": "0.1.0",
+  "description": "T20天正建筑 (Tianzheng Architecture) connector for DeepSeek Harness via MCP — creates real Tianzheng objects (TCH_WALL) and native AutoCAD entities by driving a running AutoCAD+T20 instance.",
+  "type": "module",
+  "main": "lib/index.js",
+  "license": "MIT",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek-harness",
+    "mcp",
+    "autocad",
+    "tianzheng",
+    "t20",
+    "tangent",
+    "tarch",
+    "cad",
+    "architecture"
+  ],
+  "files": [
+    "lib",
+    "bin",
+    "python",
+    "cordis.patch.yml",
+    "README.md",
+    "CHANGELOG.md",
+    "LICENSE"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch.git"
+  },
+  "bugs": {
+    "url": "https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch/issues"
+  },
+  "homepage": "https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch#readme",
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

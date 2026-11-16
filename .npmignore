@@ -1,0 +1,16 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.git/
+.github/
+.vscode/
+.idea/
+testdrawings/
+*.dwg
+*.dxf
+*.bak
+*.tmp
+*.log
+node_modules/
+pyproject.toml

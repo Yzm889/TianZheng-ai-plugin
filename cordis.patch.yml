@@ -1,0 +1,20 @@
+- insert:
+    # 1) Stage the launcher and Python MCP server into %LOCALAPPDATA%\dsh-t20-arch.
+    #    The MCP row below resolves that fixed path at runtime, so nothing depends
+    #    on where this npm package is installed or on the user's account name.
+    - id: t20-arch-setup
+      name: dsh-t20-arch
+
+    # 2) Start the MCP server through DSH's own MCP client.
+    - id: t20-arch
+      name: "@deepseek-ai/dsh-mcp-client"
+      config:
+        serverName: t20_arch
+        transport: stdio
+        command: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe"
+        args:
+          - "-NoProfile"
+          - "-ExecutionPolicy"
+          - "Bypass"
+          - "-Command"
+          - '& (Join-Path $env:LOCALAPPDATA "dsh-t20-arch\bin\run.ps1")'

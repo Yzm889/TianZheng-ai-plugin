@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "t20-arch-mcp"
+version = "0.1.0"
+description = "MCP server bridging to AutoCAD + T20-Arch (Tianzheng Architecture) over COM"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+dependencies = [
+    "mcp>=2.0",
+    "pywin32>=306; sys_platform == 'win32'",
+]
+
+[project.urls]
+Homepage = "https://github.com/REPLACE_WITH_YOUR_ACCOUNT/dsh-t20-arch"
+
+[project.scripts]
+t20-arch-mcp = "t20_arch_mcp.server:main"
+
+[tool.setuptools]
+package-dir = { "" = "python" }
+
+[tool.setuptools.packages.find]
+where = ["python"]
+include = ["t20_arch_mcp*"]
