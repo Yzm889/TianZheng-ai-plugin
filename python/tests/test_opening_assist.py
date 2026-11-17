@@ -1,9 +1,9 @@
 """插入门窗助手的单元测试（不需要 CAD）。
 
-锁定三条原则：
-  1. 点击清单的序号、类型、坐标必须完整且可执行
-  2. 操作步骤必须包含"开捕捉"和"点中点"这两个关键点
-  3. 必须明确告知这一��为什么无法自动化（MC 只收鼠标）
+锁定本次会话得出的三条关键结论：
+  1. 标记只是位置参考，不参与捕捉（用户明确要求）
+  2. 窗画在墙里的方框，门画在墙外的箭头（两者包围盒差异极大）
+  3. "插好了没有"要看门窗对象高度是否 > 0，不能看墙有没有被切分
 """
 import unittest
 
@@ -19,46 +19,48 @@ ITEMS = [
 
 
 class TestMakePlan(unittest.TestCase):
-    def test_counts_and_numbering(self):
+    def test_counts_and_labels(self):
         p = opening_assist.make_plan(ITEMS)
-        self.assertEqual(p["count"], 4)
-        self.assertEqual(p["doors"], 2)
-        self.assertEqual(p["windows"], 2)
-        self.assertEqual([s["step"] for s in p["steps"]], [1, 2, 3, 4])
-
-    def test_labels_default_per_type(self):
-        p = opening_assist.make_plan(ITEMS)
+        self.assertEqual((p["count"], p["doors"], p["windows"]), (4, 2, 2))
         labels = [s["label"] for s in p["steps"]]
-        self.assertEqual(labels[0], "M1")          # first door
-        self.assertEqual(labels[1], "M0主入口")     # explicit label wins
-        self.assertEqual(labels[2], "C1")          # first window
+        self.assertEqual(labels[0], "M1")
+        self.assertEqual(labels[1], "M0主入口")
+        self.assertEqual(labels[2], "C1")
         self.assertEqual(labels[3], "C2")
 
     def test_coordinates_preserved(self):
         p = opening_assist.make_plan(ITEMS)
         self.assertEqual((p["steps"][0]["x"], p["steps"][0]["y"]), (16200.0, 7800.0))
 
-    def test_how_to_is_actionable(self):
+    def test_tips_differ_by_kind(self):
         p = opening_assist.make_plan(ITEMS)
-        steps = p["how_to"]
-        self.assertIsInstance(steps, list)
-        joined = " ".join(steps)
-        self.assertIn("OSNAP", joined)      # must tell the user to enable snaps
-        self.assertIn("中点", joined)        # midpoint snap is how you hit the axis
+        door_tip = p["steps"][0]["tip"]
+        win_tip = p["steps"][2]["tip"]
+        self.assertNotEqual(door_tip, win_tip)
+        self.assertIn("框", win_tip)      # windows are shown as a box in the wall
+        self.assertIn("箭头", door_tip)   # doors use an outside arrow
 
-    def test_explains_why_it_is_manual(self):
+    def test_markers_are_not_promised_as_snappable(self):
         p = opening_assist.make_plan(ITEMS)
-        self.assertIn("鼠标", p["why_manual"])
-        self.assertIn("轴心线", p["note"])
+        joined = " ".join(p["how_to"]) + " " + p["note"]
+        # must NOT tell users to snap to the marker
+        self.assertNotIn("捕捉中点", joined)
+        self.assertIn("你自己判断", joined)
 
 
-class TestModuleSurface(unittest.TestCase):
-    def test_expected_functions_exist(self):
-        for fn in ("make_plan", "mark_on_drawing", "clear_marks", "verify"):
-            self.assertTrue(callable(getattr(opening_assist, fn, None)), fn)
+class TestVerifyCriteria(unittest.TestCase):
+    def test_degenerate_threshold_exported(self):
+        # a healthy TDbOpening has a real bbox height; degenerate ones are ~0
+        self.assertEqual(opening_assist.DEGENERATE_HEIGHT, 100.0)
 
-    def test_layer_name_is_dedicated(self):
-        # markers must live on their own layer so clear_marks can remove exactly them
+    def test_verify_signature(self):
+        self.assertTrue(callable(opening_assist.verify))
+        self.assertTrue(callable(opening_assist.clear_marks))
+        self.assertTrue(callable(opening_assist.mark_on_drawing))
+
+
+class TestLayer(unittest.TestCase):
+    def test_markers_live_on_dedicated_layer(self):
         self.assertEqual(opening_assist.LAYER, "AUX-OPENING")
 
 
