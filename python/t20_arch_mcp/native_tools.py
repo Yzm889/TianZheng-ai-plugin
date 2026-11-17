@@ -166,8 +166,18 @@ def _draw_closed_polyline_impl(points: Any, layer: str | None) -> dict[str, Any]
 
 
 def save_drawing(path: str | None = None) -> dict[str, Any]:
-    return _com(_save_impl, path, timeout=180)
+    # a SaveAs changes the file name; re-register so the
+    # safety guard keeps accepting this drawing
+    result = _com(_save_impl, path, timeout=180)
+    # a SaveAs changes the file name, so re-register AFTER saving to keep the
+    # safety guard accepting this drawing
+    try:
+        from . import acad_conn
 
+        acad_conn.remember_active_document()
+    except Exception:
+        pass
+    return result
 
 def _save_impl(path: str | None) -> dict[str, Any]:
     doc = _active_document()

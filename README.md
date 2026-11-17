@@ -540,3 +540,15 @@ Reading only the block's bounding box gave 7000x40000 for a sheet that is really
 42000x40500, so the first layout attempt scaled the drawing to 0.11 and threw it out of
 the frame. The plugin now records the union bbox of the entities created during
 `插入图框` (handle diff) into `~/.t20_arch_mcp/frame_rect.json` and the layout uses it.
+
+### 26. 排版/套版 assume exactly ONE frame per drawing
+With two frames present (an A3 plus a newly inserted A2) the older frame's polylines are
+counted as plan content, so 套版 reports `plan_inside_zone=false`. Keep one frame per
+drawing: erase the old one before inserting another.
+
+### 27. PDF export cannot work without a plotter configuration
+`Plot.PlotToFile` returned False, and after forcing `ActiveLayout.ConfigName =
+"DWG To PDF.pc3"` it returned True while writing no file. `-EXPORTPDF` is unknown in
+AutoCAD 2022 and `EXPORTPDF` opens a 另存为 PDF dialog that completes without producing a
+file. Root cause: the installation has no `.pc3` devices (the Plotters folder is missing).
+Fixing the plotter installation is required before PDF output can be added.

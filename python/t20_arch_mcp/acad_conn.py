@@ -583,3 +583,24 @@ def _check_tianzheng_loaded_impl() -> dict[str, Any]:
             else "tch_kernal.arx is NOT loaded: Tianzheng commands will answer 'unknown command'."
         ),
     }
+
+def remember_active_document(doc: Any | None = None) -> dict:
+    """Register the active/newly saved document as server-owned.
+
+    Call this after SaveAs (or when adopting a drawing the same user just saved
+    from this session), otherwise the safety guard keeps refusing it: a SaveAs
+    changes the file name, so the old registered name no longer matches.
+    """
+    info = get_active_document_info() if doc is None else None
+    target = doc
+    if target is None:
+        return {"registered": False, "reason": "no document"}
+    try:
+        register_owned_document(target)
+    except Exception as exc:  # noqa: BLE001
+        return {"registered": False, "reason": str(exc)}
+    try:
+        name = doc_name(target, "?")
+    except Exception:
+        name = "?"
+    return {"registered": True, "document": name}
