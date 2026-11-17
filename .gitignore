@@ -43,3 +43,5 @@ desktop.ini
 *.dwl
 *.dwl2
 
+# market screenshots must be committed
+!assets/
