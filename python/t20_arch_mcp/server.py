@@ -346,6 +346,53 @@ def zoom_extents() -> str:
         return _dump({"ok": False, "error": str(exc)})
 
 
+@mcp.tool(
+    name="inspect_frames",
+    description=(
+        "READ-ONLY: list every title frame in the active drawing with its title-block "
+        "fields (图名/比例/图号), its rectangle and the number of entities inside it. "
+        "A real sheet usually holds several frames (one per floor plan); use this to "
+        "understand the drawing before modifying anything."
+    ),
+)
+def inspect_frames() -> str:
+    try:
+        return _dump(tianzheng_runner.inspect_frames())
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="export_dxf",
+    description=(
+        "Save the active drawing as DXF (any CAD can open it). Uses file SaveAs, so it "
+        "works even where PDF plotting is unavailable. Optional path; defaults to the "
+        "user's home folder."
+    ),
+)
+def export_dxf(path: str | None = None) -> str:
+    try:
+        return _dump(native_tools.export_dxf(path))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="run_instructions",
+    description=(
+        "Run several natural-language instructions in order and report each result. "
+        "Each step goes through the same parser and entity-count verification as a "
+        "single call. Example: [\"画墙 0,0 8400,0 8400,6300 0,6300 0,0\", "
+        "\"搜索房间，标注位置 4200,3000\"]."
+    ),
+)
+def run_instructions(instructions: list[str], stop_on_error: bool = False) -> str:
+    try:
+        return _dump(nl_dispatch.execute_batch(list(instructions), stop_on_error=stop_on_error))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
 def main() -> None:
     transport = os.environ.get("T20_MCP_TRANSPORT", "stdio")
     if transport != "stdio":

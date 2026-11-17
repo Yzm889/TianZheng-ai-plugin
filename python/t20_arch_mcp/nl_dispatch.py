@@ -522,6 +522,8 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
 
         if plan.intent == "new_test_drawing":
             return acad_conn.create_test_drawing(env_check.template_for_autocad(None))
+        if plan.intent == "export_dxf":
+            return native_tools.export_dxf(params.get("path"))
         if plan.intent == "save_drawing":
             return native_tools.save_drawing(params.get("path"))
         if plan.intent == "zoom_extents":
@@ -540,6 +542,45 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
         raise ValueError(f"未实现的诊断命令: {plan.intent}")
 
     raise ValueError(f"未知后端: {backend}")
+
+
+def execute_batch(texts: list[str], *, stop_on_error: bool = False,
+                  delay: float = 0.35) -> dict[str, Any]:
+    """Run several instructions in order and report each result.
+
+    Useful for scripts and for an agent that already knows the plan; it is not a
+    preset. Every step goes through the normal parser/dispatcher, so validation and
+    the entity-count verification stay identical.
+    """
+    import time as _time
+
+    results = []
+    ok_count = 0
+    for index, text in enumerate(texts):
+        item = {"index": index, "instruction": text}
+        try:
+            res = execute(text)
+            item["ok"] = bool(res.get("ok"))
+            item["summary"] = res.get("summary")
+            item["result"] = res
+        except Exception as exc:  # noqa: BLE001
+            item["ok"] = False
+            item["error"] = f"{type(exc).__name__}: {exc}"
+        if item["ok"]:
+            ok_count += 1
+        results.append(item)
+        if not item["ok"] and stop_on_error:
+            break
+        _time.sleep(delay)
+
+    return {
+        "ok": ok_count == len(results) and ok_count == len(texts),
+        "total": len(texts),
+        "succeeded": ok_count,
+        "failed": len(results) - ok_count,
+        "stopped_early": len(results) < len(texts),
+        "steps": results,
+    }
 
 
 def execute(

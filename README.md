@@ -121,6 +121,8 @@ like a drafter would.
 | `图名标注 4200,-5200` | 插入图名 |
 | `统计墙的数量` / `列出所有天正实体` | 查询 |
 | `保存图纸` / `缩放全图` | 文档操作 |
+| `导出DXF` | 另存为 DXF（任何 CAD 可打开；不需要打印设备） |
+| `图框清单` | 只读列出每个图框的标题栏字段、矩形与框内实体数 |
 
 ### 组合示例（逐条指令，非预设）
 
@@ -251,7 +253,7 @@ Each call returns the entity delta as proof, e.g. `已执行 MC，TCH_OPENING +1
 
 ---
 
-## Tools (15)
+## Tools (21)
 
 ### Connection & drawings
 | Tool | What it does |
@@ -560,3 +562,8 @@ Fixing the plotter installation is required before PDF output can be added.
 The Tianzheng shortcut list doubles as an alias source, so the short forms work too —
 e.g. `SSFJ`(搜索房间) `MCB`(门窗表) `CRTK`(插入图框) `BGBZ`(标高) `PMPQ`(剖切符号)
 `ZDBZ`(逐点标注) `SYFH`(索引符号) `HZZW` `ZWBZ` `HZQT` `MC` `TJ` `PD` `RYPD`.
+
+### 29. DXF export replaces PDF on installs without a plotter
+`PlotToFile` needs a `.pc3` device and this machine has none, so PDF output cannot be
+built. DXF goes through `SaveAs(path, 16)` -- no plotting stack involved -- so `导出DXF`
+works everywhere and still opens in any CAD.

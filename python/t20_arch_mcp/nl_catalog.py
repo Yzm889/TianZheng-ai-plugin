@@ -569,6 +569,21 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="export_dxf",
+        aliases=("导出DXF", "存为DXF", "输出DXF", "ExportDxf"),
+        backend="native",
+        modes=(),
+        verify_type=None,
+        params=(
+            ParamSpec("path", "path", required=False, hint="输出路径，例如 D:/图纸/一层.dxf"),
+        ),
+        example="导出DXF",
+        note=(
+            "把当前图纸另存为 DXF，任何 CAD 都能打开。DXF 走文件另存，不需要打印设备，"
+            "所以本机缺少 .pc3 时（PDF 无法出图）这条仍然可用。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

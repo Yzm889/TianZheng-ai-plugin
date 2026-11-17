@@ -165,6 +165,43 @@ def _draw_closed_polyline_impl(points: Any, layer: str | None) -> dict[str, Any]
     }
 
 
+def export_dxf(path: str | None = None) -> dict[str, Any]:
+    """Export the active drawing as DXF (13 = ac2013_dxf … 16 = latest).
+
+    DXF is the interchange format every CAD tool can open, and unlike PDF it needs
+    no plotter configuration, so it works on installations where plotting is
+    unavailable.
+    """
+    import os
+
+    def _export(doc=None) -> dict[str, Any]:
+        target = path
+        if not target:
+            try:
+                base = doc.Name.rsplit(".", 1)[0]
+            except Exception:
+                base = "drawing"
+            target = os.path.join(os.path.expanduser("~"), base + ".dxf")
+        os.makedirs(os.path.dirname(os.path.abspath(target)), exist_ok=True)
+        # 16 = ac2018/最高 DXF 版本
+        doc.SaveAs(target, 16)
+        return {
+            "ok": os.path.exists(target),
+            "path": target,
+            "bytes": os.path.getsize(target) if os.path.exists(target) else 0,
+            "format": "dxf",
+        }
+
+    result = _com(_export, timeout=300)
+    try:
+        from . import acad_conn
+
+        acad_conn.remember_active_document()
+    except Exception:
+        pass
+    return result
+
+
 def save_drawing(path: str | None = None) -> dict[str, Any]:
     # a SaveAs changes the file name; re-register so the
     # safety guard keeps accepting this drawing
