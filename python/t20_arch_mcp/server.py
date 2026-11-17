@@ -12,7 +12,8 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import acad_conn, env_check, native_tools, nl_dispatch, tianzheng_query, tianzheng_runner
+from . import (acad_conn, env_check, native_tools, nl_dispatch, scene_build,
+               template_clone, tianzheng_query, tianzheng_runner)
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
@@ -389,6 +390,56 @@ def export_dxf(path: str | None = None) -> str:
 def run_instructions(instructions: list[str], stop_on_error: bool = False) -> str:
     try:
         return _dump(nl_dispatch.execute_batch(list(instructions), stop_on_error=stop_on_error))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="scan_templates",
+    description=(
+        "READ-ONLY: list Tianzheng objects usable as clone templates (walls, openings, "
+        "columns, stairs, rooms) with their handles, layers, bounding boxes and sizes. "
+        "Template cloning lets walls/openings be created without driving the fragile "
+        "Tianzheng UI dialogs."
+    ),
+)
+def scan_templates() -> str:
+    try:
+        return _dump(template_clone.scan_templates())
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="summarize_entity_classes",
+    description=(
+        "READ-ONLY: count model-space entities by native class name (TDbWall, "
+        "TDbOpening, ...) and return sample handles per class."
+    ),
+)
+def summarize_entity_classes() -> str:
+    try:
+        return _dump(scene_build.summarize_entity_classes(custom_only=True))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="build_plan",
+    description=(
+        "Build a drawing in stages from a structured spec: walls (cloned from a "
+        "template, batched), then openings, then dimensions. Each stage is "
+        "independent; on failure the completed stages are kept and reported via "
+        "completed_stages / failed_stage / partial_result. "
+        "spec = {origin:[x,y], stage:'all|walls|openings|dimensions', "
+        "walls:[{x1,y1,x2,y2}], wall_template?:<handle>, openings:[{type,x,y}], "
+        "opening_templates?:{door:<h>,window:<h>}, "
+        "dimensions:[{kind,p1,p2,pos}]}"
+    ),
+)
+def build_plan(spec: str) -> str:
+    try:
+        return _dump(scene_build.build_plan(json.loads(spec)))
     except Exception as exc:  # noqa: BLE001
         return _dump({"ok": False, "error": str(exc)})
 

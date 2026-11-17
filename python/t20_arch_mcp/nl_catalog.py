@@ -584,6 +584,29 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="scan_templates",
+        aliases=("扫描模板", "模板清单", "可用模板", "ScanTemplates"),
+        backend="template_scan",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="扫描模板",
+        note=(
+            "只读：列出图纸里可当天正模板用的对象（墙/门窗/柱/楼梯/房间等），"
+            "给出句柄、图层、包围盒和尺寸。模板克隆需要先有模板。"
+        ),
+    ),
+    CommandSpec(
+        key="entity_classes",
+        aliases=("实体分类", "类名统计", "统计天正类", "EntityClasses"),
+        backend="entity_classes",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="实体分类",
+        note="只读：按天正原生类名统计对象，并给出每类样本句柄。",
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",

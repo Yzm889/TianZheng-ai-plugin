@@ -63,6 +63,20 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "template_scan":
+        found = raw.get("found") or {}
+        if not found:
+            return "图纸里没有可用的天正模板对象。"
+        parts = ["%s×%d" % (k, v) for k, v in found.items()]
+        return "可用模板：%s。" % "、".join(parts)
+
+    if plan.backend == "entity_classes":
+        classes = raw.get("classes") or {}
+        if not classes:
+            return "没有找到天正自定义对象。"
+        parts = ["%s×%d" % (k, v["count"]) for k, v in list(classes.items())[:8]]
+        return "天正对象分类：%s。" % "、".join(parts)
+
     if plan.backend == "inspect_frames":
         if not success:
             return f"识图失败：{raw.get('error') or '未找到图框'}"
@@ -261,6 +275,20 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "template_scan":
+        from . import template_clone
+
+        r = template_clone.scan_templates()
+        r["ok"] = bool(r.get("found"))
+        return r
+
+    if backend == "entity_classes":
+        from . import scene_build
+
+        r = scene_build.summarize_entity_classes(custom_only=True)
+        r["ok"] = True
+        return r
 
     if backend == "inspect_frames":
         from . import tianzheng_runner
