@@ -62,15 +62,26 @@ def _scan_impl() -> dict[str, Any]:
             entry["size"] = [round(box[2] - box[0], 1), round(box[3] - box[1], 1)]
         groups.setdefault(name, []).append(entry)
 
-    return {
+    result: dict[str, Any] = {
         "ok": bool(groups),
         "found": {k: len(v) for k, v in groups.items()},
         "templates": groups,
-        "hint": (
-            "拿一个句柄当模板：clone_from_template(handle, targets)。"
-            "门窗需要分别有一樘门、一樘窗作为模板。"
-        ) if groups else "图纸里没有天正对象；请先手动放一个作为模板。",
     }
+    if groups:
+        result["hint"] = (
+            "拿一个句柄当模板：clone_from_template(handle, targets) 或 clone_walls_batch。"
+        )
+    else:
+        # Ask the user for the exact component instead of searching install folders.
+        from . import template_request
+
+        result["need_user_action"] = True
+        result["requirements"] = template_request.all_requirements()
+        lines = ["图纸里还没有可克隆的天正对象。请在天正里插入需要的模板：", ""]
+        for k, v in template_request.all_requirements().items():
+            lines.append("· %s：命令 %s（%s）" % (v["name"], v["command"], v["spec"]))
+        result["message"] = "\n".join(lines)
+    return result
 
 
 def clone_from_template(template_handle: str, targets: list[dict[str, Any]],

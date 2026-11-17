@@ -13,7 +13,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from . import template_clone, tianzheng_runner
+from . import template_clone, template_request, tianzheng_runner
 from .acad_conn import AcadError, _active_document, _com, allow_foreign_document, is_owned_document
 
 
@@ -173,7 +173,10 @@ def _build_impl(spec: dict[str, Any], timeout: float) -> dict[str, Any]:
                 scan = template_clone._scan_impl()          # in-process, no _com
                 found = (scan.get("templates") or {}).get("TDBWALL") or []
                 if not found:
-                    raise AcadError("图里没有墙模板；请先画一面墙或用 wall_template 指定句柄")
+                    # Do NOT go hunting through install folders; tell the user
+                    # exactly what to create and then stop.
+                    return template_request.missing_template_request(
+                        "TDBWALL", "建墙需要一面墙体模板")
                 tpl = found[0]["handle"]
             segs = [
                 {"x1": float(w["x1"]) + ox, "y1": float(w["y1"]) + oy,
@@ -200,7 +203,8 @@ def _build_impl(spec: dict[str, Any], timeout: float) -> dict[str, Any]:
                 scan = template_clone._scan_impl()          # in-process, no _com
                 op = (scan.get("templates") or {}).get("TDBOPENING") or []
                 if not op:
-                    raise AcadError("图里没有门窗模板；请先放一樘门/窗或用 opening_templates 指定")
+                    return template_request.missing_template_request(
+                        "TDBOPENING", "插门窗需要一樘门或窗作为模板")
                 # a single template serves both when types are unknown
                 tpls = {"door": op[0]["handle"], "window": op[0]["handle"]}
             made, errs = [], []
