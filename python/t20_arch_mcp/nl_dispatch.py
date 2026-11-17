@@ -63,6 +63,16 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "inspect_frames":
+        if not success:
+            return f"识图失败：{raw.get('error') or '未找到图框'}"
+        lines = []
+        for f in (raw.get("detail") or [])[:8]:
+            fields = f.get("fields") or {}
+            label = fields.get("图名") or fields.get("名称") or fields.get("图纸名称") or "?"
+            lines.append("%s(%s 实体)" % (label, f.get("entities_inside")))
+        return "共 %d 个图框，共 %d 个实体：%s" % (
+            raw.get("frames", 0), raw.get("entities_total", 0), "；".join(lines))
     if plan.backend == "layout_template":
         if not success:
             return f"套版失败：{raw.get('error') or '未知原因'}"
@@ -251,6 +261,13 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "inspect_frames":
+        from . import tianzheng_runner
+
+        report = tianzheng_runner.inspect_frames()
+        report["ok"] = bool(report.get("success"))
+        return report
 
     if backend == "layout_template":
         from . import tianzheng_runner

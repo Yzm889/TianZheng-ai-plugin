@@ -1167,6 +1167,112 @@ def _layout_to_frame_impl(margin: float, title_reserve: float,
     return result
 
 
+def inspect_frames(timeout: float = 90.0) -> dict[str, Any]:
+    """识图: list every title frame in the drawing with its fields and contents.
+
+    A real architectural sheet holds several frames (one per floor plan). This
+    reads each frame's block attributes (图名/比例/图号 …), its rectangle, and how
+    many entities sit inside it, so the drawings can be understood before anything
+    is modified.
+    """
+    return _com(_inspect_frames_impl, float(timeout), timeout=float(timeout) + 60.0)
+
+
+def _inspect_frames_impl(timeout: float) -> dict[str, Any]:
+    from win32com.client import CastTo
+
+    app = _attach_app()
+    clear_pending(app)
+    doc = _active_document()
+
+    def bbox(ent):
+        try:
+            mn, mx = ent.GetBoundingBox()
+            return (float(mn[0]), float(mn[1]), float(mx[0]), float(mx[1]))
+        except Exception:
+            return None
+
+    frames = []
+    others = []
+    try:
+        count = doc.ModelSpace.Count
+    except Exception:
+        count = 0
+    for i in range(count):
+        try:
+            ent = doc.ModelSpace.Item(i)
+        except Exception:
+            continue
+        name = ""
+        attrs = {}
+        is_frame = False
+        try:
+            if "BLOCK" in _object_name(ent).upper():
+                br = CastTo(ent, "IAcadBlockReference")
+                if br.HasAttributes and "TITLEBLK" in str(br.Name).upper().replace("$", ""):
+                    is_frame = True
+                    for a in br.GetAttributes():
+                        try:
+                            attrs[str(a.TagString).strip()] = str(a.TextString)
+                        except Exception:
+                            continue
+        except Exception:
+            is_frame = False
+        if is_frame:
+            frames.append({"entity": ent, "attrs": attrs, "box": bbox(ent)})
+        else:
+            others.append(ent)
+
+    if not frames:
+        return {"success": False,
+                "error": "当前图纸里没有带属性的图框。",
+                "entities": len(others)}
+
+    # a frame's real extent comes from the recorded rect plus everything nearby, so
+    # use the recorded rect when available and fall back to the block bbox
+    recorded = None
+    try:
+        import json as _json
+
+        saved = _json.loads(_frame_state_path().read_text(encoding="utf-8"))
+        recorded = (float(saved["x0"]), float(saved["y0"]), float(saved["x1"]), float(saved["y1"]))
+    except Exception:
+        recorded = None
+
+    report = []
+    for fr in frames:
+        box = fr["box"]
+        if box and recorded:
+            box = (min(box[0], recorded[0]), min(box[1], recorded[1]),
+                   max(box[2], recorded[2]), max(box[3], recorded[3]))
+        inside = 0
+        if box:
+            for ent in others:
+                b = bbox(ent)
+                if not b:
+                    continue
+                cx, cy = (b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0
+                if box[0] <= cx <= box[2] and box[1] <= cy <= box[3]:
+                    inside += 1
+        keys = ("图名", "名称", "图纸名称", "比例", "图号", "图别", "子项名称")
+        summary = {k: fr["attrs"].get(k, "") for k in keys if fr["attrs"].get(k)}
+        report.append({
+            "fields": summary or fr["attrs"],
+            "box": [round(v, 1) for v in box] if box else None,
+            "size": [round(box[2] - box[0], 1), round(box[3] - box[1], 1)] if box else None,
+            "entities_inside": inside,
+        })
+
+    report.sort(key=lambda f: (-(f["box"][1] if f["box"] else 0), f["box"][0] if f["box"] else 0))
+    return {
+        "success": True,
+        "document": _safe_doc_name(doc),
+        "frames": len(report),
+        "entities_total": count,
+        "detail": report,
+    }
+
+
 def set_title_attributes(values: dict[str, str], timeout: float = 30.0) -> dict[str, Any]:
     """填写图框标题栏: write block attributes of the inserted title frame.
 

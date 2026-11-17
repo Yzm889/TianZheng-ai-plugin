@@ -555,6 +555,20 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="inspect_frames",
+        aliases=("图框清单", "识图", "读取图框", "看图框", "InspectFrames"),
+        backend="inspect_frames",
+        modes=(),
+        verify_type=None,
+        params=(),
+        example="图框清单",
+        note=(
+            "只读：列出当前图纸里的每个图框，含图名/比例/图号等标题栏字段、"
+            "图框矩形、尺寸，以及落在框内的实体数。一张总图通常有多个图框"
+            "（每层平面一个），这一步用于理解图纸结构，不做任何修改。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",
