@@ -63,6 +63,12 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "prereq_check":
+        need = raw.get("need_user_count") or 0
+        if need == 0:
+            return "组件齐备，可以开工：" + str(raw.get("message", ""))[:120]
+        return "需要你先建 %d 个组件。%s" % (need, str(raw.get("message", ""))[:200])
+
     if plan.backend == "template_scan":
         found = raw.get("found") or {}
         if not found:
@@ -275,6 +281,24 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "prereq_check":
+        from . import prereq_check, scene_build
+
+        instr = str(params.get("instruction") or "")
+        if not instr:
+            # fall back to the raw text after the trigger word
+            instr = str(plan.to_dict().get("normalized") or "")
+        existing = {}
+        try:
+            sc = scene_build.summarize_entity_classes(custom_only=False)
+            for cls, rec in (sc.get("classes") or {}).items():
+                existing[cls] = rec.get("count", 0)
+        except Exception:
+            existing = {}
+        r = prereq_check.analyze(instr, existing)
+        r["ok"] = True
+        return r
 
     if backend == "template_scan":
         from . import template_clone

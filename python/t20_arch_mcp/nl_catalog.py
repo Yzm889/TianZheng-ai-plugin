@@ -607,6 +607,23 @@ SPECS: tuple[CommandSpec, ...] = (
         note="只读：按天正原生类名统计对象，并给出每类样本句柄。",
     ),
     CommandSpec(
+        key="prereq_check",
+        aliases=("开工前检查", "需求预检", "检查组件", "需要什么组件", "PrereqCheck"),
+        backend="prereq_check",
+        modes=(),
+        verify_type=None,
+        params=(
+            ParamSpec("instruction", "text", required=False,
+                      hint="要执行的原始指令，例如 建一个教室"),
+        ),
+        example="开工前检查 建一个教室",
+        note=(
+            "动手前先预检：解析出需要的组件，分成「我自己能造」和「需要你帮我建」两类，"
+            "一次性告诉你需要建什么、用什么命令、什么规格。"
+            "建好后我扫描句柄直接克隆，不再返工。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",
