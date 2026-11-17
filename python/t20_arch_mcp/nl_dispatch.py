@@ -7,6 +7,7 @@ to AutoCAD.
 """
 from __future__ import annotations
 
+import json
 import os
 import time
 
@@ -63,6 +64,15 @@ def _summary(plan: ParseResult, raw: dict[str, Any], success: bool) -> str:
         deltas = raw.get("type_deltas") or {}
         detail = "、".join(f"{k}+{v}" for k, v in deltas.items()) or "已生成"
         return f"已执行 {plan.command}（{detail}）。"
+    if plan.backend == "opening_assist":
+        if not raw.get("ok"):
+            return str(raw.get("error") or "无法生成点击清单")[:160]
+        n = raw.get("count", 0)
+        d_ = raw.get("doors", 0)
+        w_ = raw.get("windows", 0)
+        return ("已生成 %d 个门窗的点击清单（门 %d、窗 %d），并在图上画好 %d 个序号标记。"
+                "执行 MC 后按标记顺序点击即可。" % (n, d_, w_, raw.get("marked", 0)))
+
     if plan.backend == "prereq_check":
         need = raw.get("need_user_count") or 0
         if need == 0:
@@ -281,6 +291,35 @@ def execute_plan(plan: ParseResult, auto_create_drawing: bool = True) -> dict[st
                 raise
             acad_conn.create_test_drawing(env_check.template_for_autocad(None))
             return send_annotate()
+
+    if backend == "opening_assist":
+        from . import opening_assist
+
+        raw_items = params.get("items")
+        items = []
+        if isinstance(raw_items, str) and raw_items.strip():
+            try:
+                items = json.loads(raw_items)
+            except Exception:
+                items = []
+        elif isinstance(raw_items, list):
+            items = raw_items
+        if not items:
+            # derive from the current drawing's wall grid is not possible here;
+            # ask the caller to pass the computed list.
+            return {
+                "ok": False,
+                "error": "需要门窗清单：items=[{kind,x,y,width,label}]",
+                "how_to": opening_assist.make_plan([])["how_to"],
+            }
+        plan = opening_assist.make_plan(items)
+        try:
+            mk = opening_assist.mark_on_drawing(items)
+            plan["marked"] = mk.get("marked", 0)
+        except Exception as exc:  # noqa: BLE001
+            plan["marked"] = 0
+            plan["mark_error"] = str(exc)[:120]
+        return plan
 
     if backend == "prereq_check":
         from . import prereq_check, scene_build

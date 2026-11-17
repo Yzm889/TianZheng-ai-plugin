@@ -624,6 +624,23 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="opening_assist",
+        aliases=("插入门窗助手", "门窗点击清单", "帮我插门窗", "OpeningAssist"),
+        backend="opening_assist",
+        modes=(),
+        verify_type=None,
+        params=(
+            ParamSpec("items", "text", required=False,
+                      hint="门窗清单 JSON：[{kind:'door'|'window',x,y,width,label}]"),
+        ),
+        example="插入门窗助手",
+        note=(
+            "生成门窗点击清单：天正 MC 的插入点只能鼠标点选（否则墙不会自动开洞），"
+            "本指令算好每个插入点、在图上画序号标记，用户照清单点一遍即可。"
+            "所有装了天正的机器都能用，不依赖第三方 DLL。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",
