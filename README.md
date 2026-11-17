@@ -99,6 +99,9 @@ like a drafter would.
 | `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
 | `画阳台 0,0 2000,0 2000,1000 0,1000` | 画阳台 |
 | `画楼板 0,0 8400,0 8400,6300 0,6300，板厚 120` | 画楼板（可指定板厚） |
+| `画台阶 90000,0 93000,0` | 台阶（两点定宽度与方向） |
+| `坡道 102000,0` | 坡道（一次插入） |
+| `任意坡顶 0,0 8000,0 8000,6000 0,6000，坡度 30` | 任意坡顶（消耗一条封闭多段线） |
 | `画剖面墙 12000,0 12000,3000` | 剖面墙（双线） |
 | `双线楼板 12000,3000 14000,3200` | 剖面双线楼板（可指定板厚，默认 200） |
 
@@ -552,3 +555,8 @@ drawing: erase the old one before inserting another.
 AutoCAD 2022 and `EXPORTPDF` opens a 另存为 PDF dialog that completes without producing a
 file. Root cause: the installation has no `.pc3` devices (the Plotters folder is missing).
 Fixing the plotter installation is required before PDF output can be added.
+
+### 28. 天正快捷键可直接用作指令别名
+The Tianzheng shortcut list doubles as an alias source, so the short forms work too —
+e.g. `SSFJ`(搜索房间) `MCB`(门窗表) `CRTK`(插入图框) `BGBZ`(标高) `PMPQ`(剖切符号)
+`ZDBZ`(逐点标注) `SYFH`(索引符号) `HZZW` `ZWBZ` `HZQT` `MC` `TJ` `PD` `RYPD`.

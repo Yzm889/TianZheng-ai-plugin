@@ -218,7 +218,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="insert_title",
-        aliases=("插入图框", "加图框", "图框", "标题栏", "TTitleFrame"),
+        aliases=("插入图框", "加图框", "图框", "标题栏", "TTitleFrame", "CRTK"),
         backend="tianzheng_title",
         modes=("create",),
         command="TTitleFrame",
@@ -239,7 +239,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="stat_opening",
-        aliases=("门窗表", "门窗明细", "TStatOp"),
+        aliases=("门窗表", "门窗明细", "TStatOp", "MCB"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TStatOp",
@@ -267,7 +267,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="annotate_elevation",
-        aliases=("标高标注", "标注标高", "标高", "插标高", "TMElev"),
+        aliases=("标高标注", "标注标高", "标高", "插标高", "TMElev", "BGBZ"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TMElev",
@@ -300,7 +300,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="section_mark",
-        aliases=("剖切符号", "剖切标记", "加剖切符号", "TSection"),
+        aliases=("剖切符号", "剖切标记", "加剖切符号", "TSection", "PMPQ"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TSection",
@@ -318,7 +318,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="drawing_index",
-        aliases=("索引图名", "索引符号", "索引标注", "TIndexDim"),
+        aliases=("索引图名", "索引符号", "索引标注", "TIndexDim", "SYFH"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TIndexDim",
@@ -500,6 +500,61 @@ SPECS: tuple[CommandSpec, ...] = (
         ),
     ),
     CommandSpec(
+        key="draw_step",
+        aliases=("画台阶", "台阶", "TJ", "TStep", "TSTEP"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="TJ",
+        verify_type="TCH_STEP",
+        input_template=("{p1}", "{p2}", ""),
+        params=(
+            ParamSpec("p1", "point", hint="台阶第一点，例如 90000,0"),
+            ParamSpec("p2", "point", hint="台阶第二点，例如 93000,0"),
+        ),
+        example="画台阶 90000,0 93000,0",
+        note=(
+            "实测：TJ（内部命令 TSTEP）→ 指定第一点 → 第二点/翻转到另一侧(F) → 回车结束，"
+            "生成 TDbStep。两点定义台阶的宽度与方向，踏步数与总宽取天正默认。"
+        ),
+    ),
+    CommandSpec(
+        key="draw_ramp",
+        aliases=("画坡道", "坡道", "PD", "TAscent", "TASCENT"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="PD",
+        verify_type="TCH_ASCENT",
+        input_template=("{p1}",),
+        params=(
+            ParamSpec("p1", "point", hint="坡道插入位置，例如 102000,0"),
+        ),
+        example="画坡道 102000,0",
+        note=(
+            "实测：PD（TASCENT）→ 点取位置，一次生成 TDbAscent。"
+            "可用选项：转90度(A)/左右翻(S)/上下翻(D)/对齐(F)/改转角(R)/改基点(T)。"
+        ),
+    ),
+    CommandSpec(
+        key="draw_slope_roof",
+        aliases=("任意坡顶", "坡顶", "画坡顶", "RYPD", "TSlopeRoof", "TSLOPEROOF"),
+        backend="tianzheng_custom",
+        modes=("create",),
+        command="RYPD",
+        verify_type="TCH_SLOPEROOF",
+        pre_step="closed_polyline",
+        input_template=("L", "{slope}", ""),
+        params=(
+            ParamSpec("points", "points", hint="屋顶轮廓点，例如 120000,0 128000,0 128000,6000 120000,6000"),
+            ParamSpec("slope", "number", required=False, default=30, hint="坡度角，默认 30"),
+        ),
+        example="任意坡顶 120000,0 128000,0 128000,6000 120000,6000，坡度 30",
+        note=(
+            "实测：先用 COM 画一条封闭多段线，再用选择关键字 L（上一个）选中它；"
+            "→ 输入坡度角（默认 30）→ 出檐长（回车用默认 600）→ 生成 TDbSlopeRoof。"
+            "注意该命令会消耗掉那条多段线（POLYLINE -1）。"
+        ),
+    ),
+    CommandSpec(
         key="probe_position",
         aliases=("定位自检", "定位校验", "坐标自检", "校验定位", "点哪了", "ProbePosition"),
         backend="probe_position",
@@ -550,7 +605,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="dim_points",
-        aliases=("逐点标注", "两点尺寸", "线性标注", "TDimMP"),
+        aliases=("逐点标注", "两点尺寸", "线性标注", "TDimMP", "ZDBZ"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TDimMP",
@@ -566,7 +621,7 @@ SPECS: tuple[CommandSpec, ...] = (
     ),
     CommandSpec(
         key="draw_room",
-        aliases=("搜索房间", "生成房间", "标记房间", "房间", "面积", "房间面积", "TUpdSpace", "TSPace"),
+        aliases=("搜索房间", "生成房间", "标记房间", "房间", "面积", "房间面积", "TUpdSpace", "TSPace", "SSFJ"),
         backend="tianzheng_custom",
         modes=("create",),
         command="TUpdSpace",

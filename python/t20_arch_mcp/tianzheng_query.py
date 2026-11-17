@@ -58,6 +58,10 @@ TYPE_ALIASES: dict[str, tuple[str, ...]] = {
     # 箭头引注 (TArrow) and 引出标注 (TLeader)
     "TCH_SYMB_ARROW": ("TCH_SYMB_ARROW", "TDBSYMBARROW", "TDbSymbArrow"),
     "TCH_SYMB_MULTILEADER": ("TCH_SYMB_MULTILEADER", "TDBSYMBMULTILEADER", "TDbSymbMultileader"),
+    # 台阶 (TJ), 坡道 (PD), 任意坡顶 (RYPD)
+    "TCH_STEP": ("TCH_STEP", "TDBSTEP", "TDbStep"),
+    "TCH_ASCENT": ("TCH_ASCENT", "TDBASCENT", "TDbAscent"),
+    "TCH_SLOPEROOF": ("TCH_SLOPEROOF", "TDBSLOPEROOF", "TDbSlopeRoof"),
 }
 
 # Family prefixes: a request for TCH_WALL should also match anything that is
