@@ -94,6 +94,10 @@ like a drafter would.
 | `插入 A3 图框 在 -2000,-12000` | 插入图框（A0~A4 可选） |
 | `填写图框 名称=示例住宅楼 图号=建施-01 比例=1:100` | 填写标题栏属性（24 个字段） |
 | `排版` | 把图框外的全部内容整体缩放平移进图幅（右侧留给标题栏） |
+| `扫描模板` | 列出可当天正模板用的对象（墙/门窗/柱/楼梯）及句柄、尺寸 |
+| `实体分类` | 按天正原生类名统计对象，给出每类样本句柄 |
+| `插入门窗助手` | 生成门窗点击清单 + 在图上画**可捕捉**锚点，用户点一遍即可 |
+| `开工前检查` | 动手前先解析需要哪些组件，把「我能造」和「需要你建」分开告知 |
 | `套版` | 分区排版：平面缩放进左侧，门窗表/说明按原尺寸排在右侧，右下留标题栏 |
 | `在 0,0 画一根柱子` | 插入天正柱 |
 | `在 5400,1800 到 8100,4500 画一部楼梯` | 画双跑/直线楼梯 |
@@ -142,6 +146,26 @@ like a drafter would.
 
 Measured 8/8: 7 walls (4 exterior segments + the interior wall splitting them),
 2 rooms, 2 openings.
+
+## 插入门窗为什么要点鼠标
+
+天正门窗只有在 `MC` 命令里**用鼠标点选插入到墙上**时，才会与墙建立宿主关系并自动
+开洞。这四条路都实测过、都不成立：
+
+| 尝试 | 结果 |
+|---|---|
+| COM 复制已有门窗（模板克隆） | 外观正确，**墙不开洞**（墙段数始终为 1） |
+| 把复制出的门窗 `Move` 到墙轴心线 | 图形对齐，墙仍是实心 |
+| `TValidOp`（门窗检查） | 无效，输入 `ALL` 后触发 `PLAY` |
+| 调 `tch_kernal.arx` 的 `insertIntoWall` | 进程外加载失败；符号非标准导出 |
+
+根因是 `MC` 的插入点**只接受鼠标点选**，给坐标会被当成命令报"未知命令"。
+
+所以做成了半自动：`插入门窗助手` 算好每个插入点（落在**墙轴心线**上），在
+`AUX-OPENING` 图层画**可捕捉锚点**（短线的中点 + POINT 节点），用户开 MID/节点
+捕捉后按序号点一遍，再用 `verify` 核对。
+
+完整步骤与踩坑记录见 [docs/插入门窗指南.md](docs/插入门窗指南.md)。
 
 ## Install
 
@@ -562,6 +586,30 @@ Fixing the plotter installation is required before PDF output can be added.
 The Tianzheng shortcut list doubles as an alias source, so the short forms work too —
 e.g. `SSFJ`(搜索房间) `MCB`(门窗表) `CRTK`(插入图框) `BGBZ`(标高) `PMPQ`(剖切符号)
 `ZDBZ`(逐点标注) `SYFH`(索引符号) `HZZW` `ZWBZ` `HZQT` `MC` `TJ` `PD` `RYPD`.
+
+### 30. Copied doors/windows never open the wall
+
+`Copy()` on a `TDbOpening` reproduces the graphics but not the host relationship
+to its wall, so the wall stays solid. Moving the copy onto the wall axis does not
+help, and `TValidOp` cannot rebuild the link either — only a real `MC` pick does.
+
+### 31. A marker circle is not snappable
+
+The first version of the opening markers used a circle plus a cross; the user
+could not pick them. Snapping needs geometry with a real vertex: use a short line
+whose **midpoint** is the target (MID snap) and a `POINT` entity (NOD snap).
+
+### 32. `ScaleEntity` does not change an opening's width
+
+Scaling a `TDbOpening` only affects its height; the width is an internal
+Tianzheng parameter. Different widths therefore need different MC templates.
+
+### 33. Nested `_com` calls deadlock the worker thread
+
+`build_plan` originally called `scan_templates()` / `clone_walls_batch()`, which
+are themselves `_com`-wrapped. Because there is a single COM worker thread, the
+inner call waits forever on the thread that is executing the outer one. Inside a
+`_com` function, always call the `_..._impl` helpers directly.
 
 ### 29. DXF export replaces PDF on installs without a plotter
 `PlotToFile` needs a `.pc3` device and this machine has none, so PDF output cannot be
