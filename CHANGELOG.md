@@ -4,6 +4,20 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.10.1] - 2026-11-19
+
+### Added
+
+- **Published to npm** as `dsh-t20-arch`. Install with `npm install -g dsh-t20-arch`,
+  which is what the 1024Store marketplace uses for one-click installation.
+- `author` field in `package.json` (was missing, so the npm page showed no owner).
+
+### Fixed
+
+- `files` in `package.json` now excludes `__pycache__` and `*.pyc`, which are
+  generated at runtime and should not ship. Tarball dropped from 438 kB to 180 kB
+  (43 files instead of 76).
+
 ## [Unreleased]
 
 ### Added
