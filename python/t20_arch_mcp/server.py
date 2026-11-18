@@ -13,7 +13,8 @@ from typing import Any
 from mcp.server.mcpserver import MCPServer
 
 from . import (acad_conn, env_check, native_tools, nl_dispatch, opening_library,
-               scene_build, template_clone, tianzheng_query, tianzheng_runner)
+               plot_export, scene_build, template_clone, tianzheng_query,
+               tianzheng_runner)
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
@@ -450,6 +451,45 @@ def list_opening_templates(document: str = "") -> str:
         return _dump({"ok": True, "document": scope,
                       "entries": opening_library.entries(scope),
                       "state_file": opening_library._state_file()})
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="export_pdf",
+    description=(
+        "Plot the ACTIVE LAYOUT of the active drawing to a PDF file. Uses the "
+        "installed 'DWG To PDF.pc3' plotter through Layout.ConfigName + "
+        "Plot.PlotToFile -- no plotting UI is involved. MEASURED: PlotToFile returns "
+        "BEFORE the file exists (asynchronous background plotting), so this tool "
+        "polls until the PDF is really written and reports size + magic bytes; a "
+        "0-byte or missing file is reported as an error, never as success. This "
+        "changes the layout's plot settings (config/media), which is why it is "
+        "safe to run on a scratch drawing and harmless on a real one."
+    ),
+)
+def export_pdf(path: str, config: str = "", media: str = "",
+               plot_type: str = "extents", overwrite: bool = True,
+               timeout: float = 60.0, plot_style: str = "monochrome.ctb") -> str:
+    try:
+        return _dump(plot_export.export_pdf(
+            path, config=config or None, media=media or None,
+            plot_type=plot_type or "extents", overwrite=overwrite, timeout=timeout,
+            plot_style=plot_style or None))
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="list_plot_devices",
+    description=(
+        "READ-ONLY: list the plot devices (.pc3) this AutoCAD install can see, the "
+        "current layout's config/media, and which of them can produce a PDF."
+    ),
+)
+def list_plot_devices() -> str:
+    try:
+        return _dump(plot_export.list_plot_devices())
     except Exception as exc:  # noqa: BLE001
         return _dump({"ok": False, "error": str(exc)})
 

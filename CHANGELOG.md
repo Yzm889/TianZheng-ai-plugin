@@ -8,6 +8,23 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **`export_pdf` / `list_plot_devices`（PDF 导出解禁）** — 之前记为「机器上没有
+  `.pc3`，PDF 不可能」，实测证明是两条误判：
+  - `.pc3` 目录确实存在（`%APPDATA%\Autodesk\AutoCAD 2022\R24.1\chs\Plotters\`
+    自带 `DWG To PDF.pc3`）；
+  - `PlotToFile` **是异步的**：调用返回时文件还没落盘（约 20 s 后才写完），
+    立刻 `GetSize` 读到 0 字节，于是被误判为失败。
+  
+  实现要点：`IAcadPlot` 上**没有** `PlotConfigurations` 集合（会 AttributeError），
+  绘图仪只能设在 layout 上（`ActiveLayout.ConfigName`，新图默认是「无」——这才是静默
+  失败的真正原因）；白线在白底 PDF 上不可见，默认套 `monochrome.ctb`；设置后立即读
+  属性会撞 `RPC_E_CALL_REJECTED`，所以每步都走重试；最后轮询到文件大小稳定再报成功，
+  0 字节一律算错误。
+  
+  实测（`Drawing31.dwg` 副本，`Model` 布局）：58 662 字节、`%PDF-`、等待 22 s，
+  样例见 `docs/示例-Drawing31平面图.pdf`。工具数 26 → 28。
+- 5 条新单测 `tests/test_plot_export.py`（选绘图仪优先级、异步等待、0 字节不算成功）。
+- 复现脚本 `repro/pdf_export_check.py <dwg副本> <out.pdf>`。
 - **门窗宽度区分模板（不需要猜宽度）** — 天正不暴露门窗宽度：`GetXData` 返回
   `[null,null]`、没有 `Width`/`Rotation` 属性、`GetBoundingBox` 把宽度和高度混在
   一起（实测 1000 宽的窗量出来是 `1000×975`，1800 宽的是 `1800×1755`）。
@@ -18,7 +35,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
     不然返回 `stage: "missing_opening_width"`，说清楚要建哪一樘、多宽、怎么登记，
     **一个都不会克隆**；
   - 没给 `width` 时退回第一个模板，但结果里标 `width_unverified` + 警告；
-  - 新增工具 `register_opening_template` / `list_opening_templates`（共 26 个工具）。
+  - 新增工具 `register_opening_template` / `list_opening_templates`（工具数 26）。
 - 实测脚本 `repro/opening_width_check.py`。实测（`Drawing31.dwg` 副本）：
   4 → 5（成品包围盒 `1000×975`）；要 1500 宽时拒绝动手，计数停在 5。
 - 8 条新单测 `tests/test_opening_library.py`、6 条
@@ -49,7 +66,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Verification status
 
-单元测试 `66 passed / 74 subtests`。
+单元测试 `74 passed / 74 subtests`。
 
 **轴网标注（F5）** 真实图纸实测通过（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线）：
 
@@ -78,6 +95,15 @@ walls 10 -> 12 · openings 4 -> 6 · TDbDimension2 7 -> 12 · TDbAxisLabelSet 1 
 ```
 
 复现脚本 `repro/e2e_chain_check.py <dwg副本>`（`--fail-openings` 验部分保留）。
+
+**PDF 导出** 实测通过（2026-11-18，`Drawing31.dwg` 副本，`Model` 布局）：
+
+```
+config DWG To PDF.pc3 · plot_type extents · plot_style monochrome.ctb
+58 662 字节 · 文件头 %PDF- · PlotToFile 返回后等待 22 018 ms 才落盘
+```
+
+复现脚本 `repro/pdf_export_check.py <dwg副本> <out.pdf>`。
 
 ## [0.7.0] — 2026-11-17
 

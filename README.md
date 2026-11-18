@@ -517,10 +517,14 @@ dsh-t20-arch/
 ├── bin/run.ps1            # finds/builds a Python with pywin32+mcp, runs the server
 ├── python/
 │   └── t20_arch_mcp/
-│       ├── server.py           # MCP entry, 15 tools
+│       ├── server.py           # MCP entry, 28 tools
 │       ├── acad_conn.py        # COM attach, STA thread, busy retry, ownership, ARX check
 │       ├── tianzheng_runner.py # stepwise execution, dialog flow, count verification
 │       ├── tianzheng_query.py  # entity walking + canonical type matching
+│       ├── scene_build.py      # staged builder: walls → openings → dimensions
+│       ├── template_clone.py   # clone existing Tianzheng objects as templates
+│       ├── opening_library.py  # per-drawing door/window width registry
+│       ├── plot_export.py      # COM PDF plotting (async, polled)
 │       ├── nl_catalog.py       # intent → command/params/verification table
 │       ├── nl_parser.py        # Chinese instruction parsing
 │       ├── nl_dispatch.py      # parse → execute → verify → Chinese summary
@@ -665,7 +669,38 @@ Two measurement traps worth remembering:
 * the axis annotation is the only dimension that adds `TDbAxisLabelSet`; linear
   dimensions alone leave that at its old value, which is correct.
 
-### 29. DXF export replaces PDF on installs without a plotter
-`PlotToFile` needs a `.pc3` device and this machine has none, so PDF output cannot be
-built. DXF goes through `SaveAs(path, 16)` -- no plotting stack involved -- so `导出DXF`
-works everywhere and still opens in any CAD.
+### 35. PDF export works — the "no plotter" conclusion was wrong
+
+The project had listed PDF export as abandoned because `PlotToFile` produced
+nothing. Two wrong assumptions were behind that: the `.pc3` folder *does* exist
+(`%APPDATA%\Autodesk\AutoCAD 2022\R24.1\chs\Plotters\` ships `DWG To PDF.pc3`),
+and `PlotToFile` is **asynchronous** — the file appears ~20 s after the call
+returns, so an immediate `GetSize` check reads 0 bytes and looks like a failure.
+
+What actually matters when driving it from COM:
+
+* `IAcadPlot` has **no** `PlotConfigurations` collection (that call raises
+  `AttributeError`). The plotter is set on the layout instead:
+  `ActiveLayout.ConfigName = "DWG To PDF.pc3"`;
+* `ActiveLayout.ConfigName` reads `"无"` on a fresh drawing — that is the real
+  cause of a silent no-op, not a missing driver;
+* white drawing lines disappear on a white PDF page: set
+  `ActiveLayout.StyleSheet = "monochrome.ctb"`;
+* property reads right after the sets can hit `RPC_E_CALL_REJECTED` (AutoCAD is
+  busy plotting), so every step needs the retry helper.
+
+`export_pdf(path)` therefore sets config + plot style, calls
+`Plot.PlotToFile(path, config)`, then polls until the file stops growing and
+reports size plus the `%PDF-` magic; a 0-byte file is an error, never success.
+
+Measured on a copy of `Drawing31.dwg`: `Model` layout, `DWG To PDF.pc3`,
+extents, `monochrome.ctb` -> 58 662 bytes, first bytes `%PDF-`, 22 s wait.
+Sample output: `docs/示例-Drawing31平面图.pdf`.
+
+### 29. DXF export as the plotter-free fallback
+
+The earlier conclusion "this machine has no `.pc3`, so PDF is impossible" was
+wrong (see §35). DXF is still worth having: `SaveAs(path, 16)` bypasses the whole
+plotting stack, needs no plotter and no retry dance, and opens in any CAD — so
+`导出DXF` stays the cheap, always-works export. Use `export_pdf` when you need a
+print-ready sheet, DXF when you need geometry.

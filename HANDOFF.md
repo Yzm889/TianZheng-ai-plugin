@@ -44,7 +44,7 @@ AutoCAD 窗口，让天正自己执行。
 ```powershell
 $py = "C:\Users\<你>\AppData\Local\Programs\Python\Python313\python.exe"
 cd python
-& $py -m pytest tests -q          # 应输出 66 passed
+& $py -m pytest tests -q          # 应输出 74 passed
 ```
 
 ### 跑起来
@@ -85,7 +85,7 @@ python/t20_arch_mcp/
 ├── nl_catalog.py        ★ 53 条指令的规格表（改这里就加指令）
 ├── nl_parser.py            自然语言 → 意图解析
 ├── nl_dispatch.py          意图 → 实际调用 + 结果摘要
-├── server.py               MCP 服务入口，26 个工具
+├── server.py               MCP 服务入口，28 个工具
 ├── sendinput.py            SendInput 键鼠模拟、焦点管理
 ├── winmsg.py               窗口消息、命令行文本读取
 ├── dialog.py               天正式 #32770 对话框的枚举与按钮点击
@@ -94,6 +94,7 @@ python/t20_arch_mcp/
 ├── scene_build.py         分阶段建图 walls→openings→dimensions
 ├── opening_assist.py    ★ 门窗位置提示（见 §5）
 ├── opening_library.py   ★ 门窗模板宽度登记表（宽度读不出来，只能登记，见 §5.1）
+├── plot_export.py       ★ PDF 导出（COM 异步打印，见 §5.2）
 ├── prereq_check.py         开工前需求预检
 ├── template_request.py     缺模板时给用户的组件规格说明
 ├── tianzheng_query.py      实体统计、类型直方图
@@ -152,7 +153,6 @@ acad_conn.remember_active_document(doc)   # 或显式登记
 | 功能 | 原因 |
 |---|---|
 | 改墙厚 / 改外墙厚 | 实测无法可靠实现，用户已确认放弃 |
-| PDF 导出 | 机器上没有 `.pc3` 绘图仪配置，`PlotToFile` 写不出文件 |
 | 立面 / 剖面（`TBudElev` / `TBudSect`） | 必须先在「工程管理」建工程 + 楼层表，纯 UI 操作 |
 | 轴网自定义开间 | 对话框里的 Axf 自绘控件，无法写入 |
 | 门窗宽度修改 | `ScaleEntity` 只改高度，宽度是天正内部参数（要不同宽度只能建不同宽度的模板并登记，见 §5.1） |
@@ -254,6 +254,27 @@ A. 声明 1000 宽 + 模板 4C4  -> TDbOpening 4 -> 5，成品包围盒 1000×97
 B. 要 1500 宽，模板只有 1000 -> 拒绝动手，TDbOpening 停在 5
 ```
 
+### 5.2 PDF 导出（曾经的"不可能"其实是两条误判）
+
+早期结论「机器上没有 `.pc3`，PDF 出不来」是错的：
+
+| 误判 | 实际 |
+|---|---|
+| 没有 `.pc3` | `%APPDATA%\Autodesk\AutoCAD 2022\R24.1\chs\Plotters\` 自带 `DWG To PDF.pc3` |
+| `PlotToFile` 写不出文件 | 它是**异步**的，返回时文件还不存在，约 20 s 后才落盘 |
+
+真正要绕的坑：
+
+- `IAcadPlot` 上**没有** `PlotConfigurations` 集合，调用直接 `AttributeError`；
+  绘图仪必须设在 layout：`ActiveLayout.ConfigName = "DWG To PDF.pc3"`；
+- 新图的 `ConfigName` 读出来是 `"无"` —— 这才是"调用成功但没输出"的原因；
+- 图中的墙线是白色，打在白底 PDF 上等于隐形，要套 `monochrome.ctb`；
+- 设置后立刻读属性会撞 `RPC_E_CALL_REJECTED`，每步都要重试；
+- 判定成功必须轮询到文件大小稳定，0 字节算失败。
+
+实测（`Drawing31.dwg` 副本）：58 662 字节、`%PDF-`、等待 22 s，样例
+`docs/示例-Drawing31平面图.pdf`。复现 `repro/pdf_export_check.py <dwg> <out.pdf>`。
+
 ---
 
 ## 6. 坑清单（按重要性排序）
@@ -277,6 +298,7 @@ B. 要 1500 宽，模板只有 1000 -> 拒绝动手，TDbOpening 停在 5
 | 15 | 提权不一致导致 COM 失败 `0x80070522` | DSH 和 CAD 必须同权限级别 |
 | 16 | 直方图的 key 是**归一后**的类名（`TDBAXISLABELSET`），拿 `TCH_AXIS_LABEL` 去查永远得 0 | 计数一律走 `count_entities()`（带别名匹配），直方图只用来读原始类名 |
 | 17 | 门窗宽度**读不出来**（XData 空、无 Width 属性、包围盒混高度），`ScaleEntity` 只改高度 | 用 `register_opening_template` 登记宽度，`build_plan` 按登记值匹配；读不到就报错，不许猜 |
+| 18 | `PlotToFile` 返回 ≠ 文件写好（异步，约 20 s），`IAcadPlot` 也没有 `PlotConfigurations` | 绘图仪设在 `ActiveLayout.ConfigName`（默认「无」= 静默失败）；套 `monochrome.ctb`；轮询到大小稳定才算成功 |
 
 ---
 
@@ -310,7 +332,7 @@ CommandSpec(
 ```powershell
 cd python
 python -m pytest tests -q
-# 66 passed, 74 subtests
+# 74 passed, 74 subtests
 ```
 
 现有测试文件：
@@ -323,6 +345,7 @@ python -m pytest tests -q
 - `test_opening_library.py` — 门窗模板宽度登记表（按图纸分区、容差、种类不串）
 - `test_scene_build_openings.py` — 宽度路由：命中才克隆、缺宽度先要模板、没给
   宽度必须标 `width_unverified`
+- `test_plot_export.py` — 选绘图仪的优先级、`PlotToFile` 异步等待、0 字节不算成功
 
 **测试里有一些"原则守护"用例**，例如：
 ```python
@@ -354,8 +377,8 @@ for bad in ("安装目录", "图库", "搜索"):
 ### 已完成
 
 ```
-53 条指令 · 26 个 MCP 工具 · 66 passed / 74 subtests
-本地领先远端 3 个提交（F5、门窗宽度、端到端回归）· 工作区 clean
+53 条指令 · 28 个 MCP 工具 · 74 passed / 74 subtests
+本地领先远端 3 个提交 · 工作区 clean
 ```
 
 ### 已完成并实测：F5（`build_plan` 内部的轴网标注）
@@ -420,10 +443,22 @@ completed_stages ["walls"] · failed_stage "openings" · stage missing_opening_w
 直方图 key 跨 run 比较，计数走 `count_entities()`；线性标注不增加 `TDbAxisLabelSet`，
 只有轴网标注会。
 
+### 已完成并实测：PDF 导出（`export_pdf`）
+
+`IAcadPlot` 没有 `PlotConfigurations`，绘图仪只能设在 `ActiveLayout.ConfigName`；
+`PlotToFile` 是异步的（约 20 s 才落盘），所以必须轮询；白线配 `monochrome.ctb`。
+
+```
+config DWG To PDF.pc3 · extents · monochrome.ctb
+58 662 字节 · %PDF- · 等待 22 018 ms
+```
+
+样例 `docs/示例-Drawing31平面图.pdf`；复现
+`& $py repro\pdf_export_check.py <dwg副本> <out.pdf>`。
+
 ### 可以继续做的
 
-1. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
-2. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
+1. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
 
 ### 仓库
 
@@ -450,7 +485,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 
 > 写这份文档时的实测状态（2026-11-18）：
 > ```
-> pytest            66 passed, 74 subtests          ✅
+> pytest            74 passed, 74 subtests          ✅
 > server import     OK                              ✅
 > CAD 连接          OK（AutoCAD 2022 + 天正 T20 正在运行）
 > ```
@@ -463,7 +498,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 # 1) 确认代码无损坏（不需要 CAD）
 cd C:\Users\19891\Desktop\插件创作\python
 & $py -m pytest tests -q
-# 期望：66 passed, 74 subtests passed
+# 期望：74 passed, 74 subtests passed
 
 # 2) 确认 MCP 服务可导入（不需要 CAD）
 & $py -c "import sys;sys.path.insert(0,'.');import t20_arch_mcp.server;print('OK')"
