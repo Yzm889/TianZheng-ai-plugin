@@ -32,8 +32,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   命令要的尺寸线位置/表格插入点/基线点 + 预期实体增量」的 `handoff_text`（可直接贴给
   带 GUI 的 AI）。`kind` 收 9 类命令，中英文写法都认；`out_path` 可落成 .md。
   算法在 `handoff.py` 的 `build_handoff()`（纯函数），COM 采集在 `collect_document()`。
-  测试 `tests/test_handoff.py`（18 例：kind 解析取最长别名、句柄按类型挑、圆周点位、
-  横墙基线点、两表错行、已完成判定、不支持项说明、文案带护栏）。
+  测试 `tests/test_handoff.py`（20 例：kind 解析取最长别名、句柄按类型挑、圆周点位、
+  横墙基线点、两表错行、已完成判定、不支持项字段完整、文案带护栏）。真图实测
+  （`docs\GUI功能验收样式图.dwg`）修掉三处：直径与半径同为 `TDbRadiusDim` 只能按数量
+  判、unsupported 项缺 `handles` 会 KeyError、表格插入点被旧表格撑到图外（排版基准改为
+  只算图形本体）。
 
 ### Fixed
 

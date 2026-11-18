@@ -23,6 +23,7 @@ ENTITIES = [
 ]
 
 DOC = {"name": "样图.dwg", "path": r"C:\tmp\样图.dwg"}
+ENTITIES_MIN_X = -1000.0    # 轴网线 21 的包围盒左边界，用例里的图最左
 
 
 class TestKindResolution(unittest.TestCase):
@@ -92,9 +93,11 @@ class TestSuggestedPoints(unittest.TestCase):
     def test_two_tables_get_different_rows(self):
         out = handoff.build_handoff(
             DOC, ENTITIES, [{"kind": "area_stat"}, {"kind": "hatch_area"}])
-        y1 = out["pending"][0]["points"][0][1]
-        y2 = out["pending"][1]["points"][0][1]
-        self.assertLess(y2, y1)                 # 第二张表往下排，别叠在第一张上
+        p1, p2 = out["pending"][0]["points"][0], out["pending"][1]["points"][0]
+        self.assertLess(p2[1], p1[1])           # 第二张表往下排，别叠在第一张上
+        # 表格从图形左边缘稍内一点起铺，别甩到图外很远（真图实测踩过）
+        self.assertEqual(p1[0], ENTITIES_MIN_X + 300.0)
+        self.assertEqual(p2[0], p1[0])
 
 
 class TestFinishedDetection(unittest.TestCase):
@@ -110,6 +113,22 @@ class TestFinishedDetection(unittest.TestCase):
         out = handoff.build_handoff(DOC, ents, [{"kind": "radius_dim"}])
         self.assertTrue(out["pending"][0]["already_looks_done"])
 
+    def test_diameter_done_needs_two_same_type_dims(self):
+        """真图实测：半径和直径都产出 TDbRadiusDim，只能靠数量区分。"""
+        one = ENTITIES + [{"handle": "31", "type": "TDbRadiusDim", "layer": "PUB_DIM",
+                           "bbox": [9000, 5000, 12000, 7000]}]
+        out = handoff.build_handoff(DOC, one, [{"kind": "diameter_dim"}])
+        self.assertFalse(out["pending"][0]["already_looks_done"])
+
+        two = ENTITIES + [
+            {"handle": "31", "type": "TDbRadiusDim", "layer": "PUB_DIM",
+             "bbox": [9000, 5000, 12000, 7000]},
+            {"handle": "32", "type": "TDbRadiusDim", "layer": "PUB_DIM",
+             "bbox": [12000, 6000, 14000, 7500]},
+        ]
+        out = handoff.build_handoff(DOC, two, [{"kind": "diameter_dim"}])
+        self.assertTrue(out["pending"][0]["already_looks_done"])
+
 
 class TestUnsupported(unittest.TestCase):
     def test_parking_is_reported_without_targets(self):
@@ -117,6 +136,15 @@ class TestUnsupported(unittest.TestCase):
         entry = out["pending"][0]
         self.assertFalse(entry["supported"])
         self.assertIn("TParkingSpace", entry["note"])
+
+    def test_unsupported_item_still_has_handle_fields(self):
+        """回归：真图跑时 unsupported 项缺 handles/points 会把调用方 KeyError 掉。"""
+        out = handoff.build_handoff(
+            DOC, ENTITIES, [{"kind": "parking_number"}, {"kind": "不存在的活"}])
+        for entry in out["pending"]:
+            self.assertEqual(entry["handles"], [])
+            self.assertEqual(entry["points"], [])
+            self.assertEqual(entry["pick_points"], [])
 
 
 class TestHandoffText(unittest.TestCase):

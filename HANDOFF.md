@@ -588,7 +588,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 # 1) 确认代码无损坏（不需要 CAD）
 cd C:\Users\19891\Desktop\插件创作\python
 & $py -m pytest tests -q
-# 期望：101 passed, 74 subtests passed
+# 期望：103 passed, 74 subtests passed
 
 # 2) 确认 MCP 服务可导入（不需要 CAD）
 & $py -c "import sys;sys.path.insert(0,'.');import t20_arch_mcp.server;print('OK')"
@@ -650,9 +650,27 @@ handoff_to_gui_host(pending=[
 2. 清单里点位直接打 float 会出现 `1933.3333333` 这种读不下去的数字 →
    统一走 `_fmt()`（1 位小数，整数值不带 `.0`）。
 
-**测试**：`python\tests\test_handoff.py` 18 例，全量 `101 passed, 74 subtests`。
-**已知未做**：没在真实 CAD 上端到端跑过（当时 CAD 已关闭）；`FINISHED_RULES` 里
-直径标注用的是 `DIADIM` 关键字，实际类名待 CAD 起来后按 `type_counts` 校正。
+**测试**：`python\tests\test_handoff.py` 20 例，全量 `103 passed, 74 subtests`。
+
+**2026-11-18 真图实测（`docs\GUI功能验收样式图.dwg`，不靠假数据）**：跑通后抓到三个真问题，
+都已修：
+
+1. **直径标注的类名猜错了**：天正的半径标注和直径标注**都产出 `TDbRadiusDim`**
+   （真图里 `TDbRadiusDim: 2` 就是一次半径 + 一次直径）。原来 `FINISHED_RULES` 用
+   `"DIADIM"` 关键字永远匹配不到 → 直径项永远显示"没做"。现在改成同类型 + 数量门槛
+   （≥2 个才认为两种都有），并在清单里注明"按数量推断"。
+2. **不支持项缺字段**：`parking_number` / 无法识别的 kind 走的是 `unsupported` 分支，
+   entry 里没有 `handles`，调用方读 `entry["handles"]` 直接 `KeyError`。现在三条分支
+   都保证有 `handles / pick_points / points`。
+3. **表格插入点越排越远**：原来按"图形 bbox 右下方"算，而 bbox 里包含了上一轮排好的
+   表格和轴号圈，实测 `max_x` 从 13200 被撑到 17506，新表插到 18706 去了。现在
+   排版基准只算图形本体（排除 `TDBSHEET / TDBAXISLABELSET / *DIM*`），并对齐左边缘、
+   往正下方排：实测变成 `-700,-2200` / `-700,-5600`。
+
+真图实测的原始类型统计（可作后续核对基准）：`AcDbLine 8 / TDbWall 4 / TDbSpace 1 /
+TDbSheet 2 / AcDbCircle 1 / AcDbArc 1 / TDbRadiusDim 2 / AcDbPolyline 2 / AcDbHatch 1 /
+AcDbText 1 / TDbAxisLabelSet 1`。
+**仍不确定**：`TParkingNumber` 依旧跑不通（前置 `TParkingSpace` 只回「*取消*」）。
 
 ---
 

@@ -70,13 +70,15 @@ KIND_ALIASES: dict[str, str] = {
     "车位": "parking_number", "车位编号": "parking_number",
 }
 
-# 已完成判定：类型名里出现这些片段就认为这类活已有产出
-FINISHED_RULES: tuple[tuple[str, str, str], ...] = (
-    ("radius_dim", "RADIUSDIM", "半径标注"),
-    ("diameter_dim", "DIADIM", "直径标注"),
-    ("area_stat", "TDBSHEET", "天正表格（面积统计 / 填充面积）"),
-    ("hatch_area", "TDBSHEET", "天正表格（面积统计 / 填充面积）"),
-    ("axis_label", "TDBAXISLABELSET", "单轴标注（轴号圈）"),
+# 已完成判定：类型名里出现这些片段、且数量达到 min_count 就认为这类活已有产出
+# 注意：天正的半径标注和直径标注都产出 TDbRadiusDim（2026-11-18 真图实测），
+# 类型上区分不了，只能靠数量推断——1 个基本是半径，2 个才大概率两种都做了。
+FINISHED_RULES: tuple[tuple[str, str, str, int], ...] = (
+    ("radius_dim", "RADIUSDIM", "半径标注", 1),
+    ("diameter_dim", "RADIUSDIM", "直径标注（与半径同类型，按数量推断）", 2),
+    ("area_stat", "TDBSHEET", "天正表格（面积统计 / 填充面积）", 1),
+    ("hatch_area", "TDBSHEET", "天正表格（面积统计 / 填充面积）", 1),
+    ("axis_label", "TDBAXISLABELSET", "单轴标注（轴号圈）", 1),
 )
 
 TABLE_STEP = 3400.0      # 天正 1:100 的表格约 2435 高，留点余量
@@ -90,6 +92,10 @@ POINT_LABELS: dict[str, str] = {
     "table": "表格插入点",
     "baseline": "基线点",
 }
+
+# 排版基准只算"图形本体"：已经排好的表格和标注会把包围盒撑大，
+# 拿它们当基准会让新表格越排越远（真图实测：max_x 从 13200 变成 17506）。
+NON_BODY_TOKENS: tuple[str, ...] = ("TDBSHEET", "TDBAXISLABELSET", "DIM")
 
 
 def _fmt(value: Any) -> str:
@@ -114,7 +120,17 @@ def _type_counts(entities: list[dict[str, Any]]) -> dict[str, int]:
 
 
 def _extents(entities: list[dict[str, Any]]) -> tuple[float, float, float, float] | None:
-    boxes = [e["bbox"] for e in entities if e.get("bbox")]
+    """图形本体的包围盒：表格和标注不算，否则新表格会被旧表格越推越远。"""
+    boxes = []
+    for ent in entities:
+        if not ent.get("bbox"):
+            continue
+        upper = str(ent.get("type") or "").upper()
+        if any(token in upper for token in NON_BODY_TOKENS):
+            continue
+        boxes.append(ent["bbox"])
+    if not boxes:
+        boxes = [e["bbox"] for e in entities if e.get("bbox")]
     if not boxes:
         return None
     return (
@@ -175,8 +191,10 @@ def _point_for_mode(mode: str, ent: dict[str, Any],
     if mode == "table":
         if extents is None:
             return [[round(cx + 2000.0, 3), round(cy, 3)]]
-        max_x, min_y = extents[2], extents[1]
-        return [[round(max_x + TABLE_OFFSET, 3),
+        # 天正表格是"插入点 + 向右下铺开"（1:100 约 7300×2435）。放在图形正下方、
+        # 与左边缘对齐：横向不会甩出图太多，多张表往下依次排开不重叠。
+        min_x, min_y = extents[0], extents[1]
+        return [[round(min_x + 300.0, 3),
                  round(min_y - TABLE_OFFSET - TABLE_STEP * table_index, 3)]]
     return []
 
@@ -200,8 +218,11 @@ def _resolve_kind(raw: str) -> str:
 
 
 def _finished(kind: str, types: dict[str, int]) -> str:
-    for rule_kind, token, label in FINISHED_RULES:
-        if rule_kind == kind and any(token in t.upper() for t in types):
+    for rule_kind, token, label, min_count in FINISHED_RULES:
+        if rule_kind != kind:
+            continue
+        hits = [t for t in types if token in t.upper()]
+        if sum(types[t] for t in hits) >= min_count:
             return label
     return ""
 
@@ -225,7 +246,8 @@ def build_handoff(document: dict[str, Any], entities: list[dict[str, Any]],
         if spec is None:
             planned.append({
                 "input": raw_kind, "kind": "", "label": str(raw_kind),
-                "supported": False,
+                "supported": False, "expect_delta": 0,
+                "handles": [], "pick_points": [], "points": [],
                 "note": "插件不认识这类活，请用 kind ∈ " + ", ".join(sorted(KIND_SPEC)),
             })
             continue
@@ -241,6 +263,9 @@ def build_handoff(document: dict[str, Any], entities: list[dict[str, Any]],
         }
         if spec.get("unsupported"):
             entry["note"] = spec["unsupported"]
+            entry["handles"] = []
+            entry["pick_points"] = []
+            entry["points"] = []
             planned.append(entry)
             continue
 
@@ -294,10 +319,16 @@ def build_handoff(document: dict[str, Any], entities: list[dict[str, Any]],
         "已完成（插件按类型判定，仅供参考）：",
     ]
     finished_any = False
-    for rule_kind, token, label in FINISHED_RULES:
-        hit = next((t for t in types if token in t.upper()), "")
-        if hit:
-            lines.append(f"- {label}：{types[hit]} 个（{hit}）")
+    seen_tokens: set[str] = set()
+    for rule_kind, token, label, min_count in FINISHED_RULES:
+        if token in seen_tokens:
+            continue
+        hits = [t for t in types if token in t.upper()]
+        total = sum(types[t] for t in hits)
+        if total:
+            seen_tokens.add(token)
+            detail = "、".join(f"{t} {types[t]}" for t in hits)
+            lines.append(f"- {label}：{total} 个（{detail}）")
             finished_any = True
     if not finished_any:
         lines.append("- 还没检测到标注/表格类产出")
