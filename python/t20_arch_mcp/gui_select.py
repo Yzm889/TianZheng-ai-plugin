@@ -126,6 +126,15 @@ def _plan_impl(spec: dict[str, Any]) -> dict[str, Any]:
 
     points: list[dict[str, Any]] = []
     for item in spec["picks"]:
+        if "screen" in item and item["screen"]:
+            # 屏幕像素点：调用方看截图给的绝对位置。
+            # MEASURED 2026-11-18: 键盘 ZOOM 能改画面，但 ActiveViewport 读回的
+            # centre/viewsize 不跟着变，于是 world->screen 在缩放之后会算偏，
+            # 点轴线这类 1px 细线必然落空（CAD 转入"指定对角点"框选态）。要走
+            # 视觉点选的场景，直接给屏幕坐标，绕开这条不可靠的映射。
+            points.append({"source": "screen",
+                           "screen": (int(item["screen"][0]), int(item["screen"][1]))})
+            continue
         if "world" in item and item["world"]:
             wx, wy = float(item["world"][0]), float(item["world"][1])
             points.append({"source": "world", "world": [wx, wy],
@@ -155,6 +164,9 @@ def _plan_impl(spec: dict[str, Any]) -> dict[str, Any]:
                        "screen": screen_map.world_to_screen(state, wx, wy)})
     if labels and not all(l.get("screen") for l in labels):
         return {"ok": False, "error": "定位点算不出屏幕坐标，先检查坐标是否在视图内"}
+    for scr in spec.get("screen_labels", []) or []:
+        labels.append({"source": "screen",
+                       "screen": (int(scr[0]), int(scr[1]))})
 
     return {
         "ok": all(p.get("screen") for p in points),
@@ -181,8 +193,10 @@ def _count_impl(spec: dict[str, Any]) -> dict[str, Any]:
     try:
         msp = doc.ModelSpace
         total = int(msp.Count)
-    except Exception:  # noqa: BLE001
-        total = 0
+    except Exception as exc:  # noqa: BLE001
+        # 读不到就当"未知"，别当 0：否则 delta 会被算成负的假失败
+        return {"total": None, "kind": str(spec.get("kind") or ""),
+                "error": f"{type(exc).__name__}: {exc}"}
     out: dict[str, Any] = {"total": total}
     kind = str(spec.get("kind") or "")
     if kind and msp is not None:
@@ -409,15 +423,74 @@ def click_targets(handles: list[str], points: list[list[float]] | None = None,
     return {"ok": True, "pid": pid, "clicked": clicked, "selection": selection}
 
 
+def _com_pending() -> bool:
+    """AutoCAD 在等鼠标输入时，连"摸一下当前文档"都会被拒。
+
+    MEASURED 2026-11-18: 用 `lambda: 0` 这种不碰文档的探针永远是通的，会误判成
+    "命令已经收尾"，于是跳过收尾回车、直接去统计；而统计里 ModelSpace 被拒，
+    total 兜底成 0，delta 变成假的 -24。必须真去读一次 ModelSpace.Count。
+    """
+    try:
+        acad_conn._com(lambda: int(acad_conn._active_document().ModelSpace.Count),
+                       timeout=3.0, transient=True)
+        return False
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _await_input(timeout: float = 12.0, poll: float = 0.3) -> bool:
+    """等到命令真正进入"等输入"状态。
+
+    两种命令的判据不同：
+      * 模态参数框（门窗 MC、图框）—— AutoCAD 会拒掉所有 COM 调用；
+      * 非模态浮动面板（轴网标注 TMultAxisDim）—— COM 照常可用，只能看命令行
+        尾部有没有冒出新的提示。
+    MEASURED 2026-11-18: 对非模态面板用 COM 判据会立刻返回 True，两个点几乎连着
+    发出去，第一个点被吞掉、第二个点变成"起始轴线"，最后停在"请选择终止轴线"。
+    """
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if _com_pending():
+            return True
+        time.sleep(poll)
+    return False
+
+
+def _tail_last(pid: int) -> str:
+    if not pid:
+        return ""
+    tail = winmsg.command_tail(pid, 400)
+    return tail.split("命令:")[-1].strip() if tail else ""
+
+
+def _await_new_prompt(pid: int, prev: str, timeout: float = 10.0, poll: float = 0.3) -> str:
+    """等命令行尾部换出一条新的"等输入"提示。
+    比固定 sleep 可靠：面板弹出慢、机器负载高都不会把点吞掉。
+    """
+    deadline = time.time() + timeout
+    last = prev
+    while time.time() < deadline:
+        last = _tail_last(pid)
+        if last and last != prev and ("请选择" in last or "指定" in last or "输入" in last):
+            return last
+        time.sleep(poll)
+    return last
+
+
 def run_select_command(command: str, handles: list[str],
                        points: list[list[float]] | None = None,
                        label_points: list[list[float]] | None = None,
                        verify_type: str = "", expect_delta: int = 1,
-                       settle: float = 0.5, wait: float = 2.5) -> dict[str, Any]:
+                       settle: float = 0.5, wait: float = 2.5,
+                       screen_points: list[list[int]] | None = None,
+                       screen_label_points: list[list[int]] | None = None) -> dict[str, Any]:
     """发一条"要选对象"的命令 → 逐点点选 → 回车 →（可选）点定位点 → 核对增量。
 
     label_points 是选完对象之后第二步要点的位置（半径标注的"尺寸线位置"、面积统计的
     "表格插入点"…）。不会再补回车：命令结束后一个回车会重复上一条命令。
+
+    screen_points / screen_label_points 给的是绝对屏幕像素坐标（看截图定位），
+    用于"点 1px 细线/点空间里的位置"这类 world→screen 不可靠的场景。
     """
     if not gui_enabled():
         raise acad_conn.AcadError(
@@ -428,10 +501,13 @@ def run_select_command(command: str, handles: list[str],
     app = acad_conn._attach_app()
     hwnd = _hwnd_of(app)
     pid = _pid_of(hwnd)
-    picks = [{"handle": h} for h in handles] + [{"world": p} for p in (points or [])]
+    picks = ([{"handle": h} for h in handles]
+             + [{"world": p} for p in (points or [])]
+             + [{"screen": p} for p in (screen_points or [])])
     found = acad_conn._com(_lookup, handles) if handles else {}
     plan = acad_conn._com(_plan_impl, {"hwnd": hwnd, "pid": pid, "picks": picks,
                                        "labels": label_points or [],
+                                       "screen_labels": screen_label_points or [],
                                        "_found": found}, timeout=90)
     if not plan.get("ok"):
         return {"ok": False, "stage": "plan", "plan": plan,
@@ -450,6 +526,9 @@ def run_select_command(command: str, handles: list[str],
         px, py = point["screen"]
         sendinput.click(int(px), int(py), settle=settle)
         clicked.append(point)
+        time.sleep(settle)
+    # 收尾回车：选择类命令点完最后一点后还要按一次回车接受默认（轴网标注问的是
+    # 「请选择不需要标注的轴线」）。只按一次 —— 多按一次会重复上一条命令。
     sendinput.press_key(ENTER_VK, settle=0.2)
     time.sleep(wait)
 
@@ -461,16 +540,42 @@ def run_select_command(command: str, handles: list[str],
     if label_clicks:
         time.sleep(wait)
 
-    after = acad_conn._com(_count_impl, {"kind": verify_type})
+    # 统计前先等 COM 恢复；浮动参数面板（#32770）还挡着时先关掉再统计，
+    # 否则 _count_impl 的 total 兜底成 0，delta 会被算成假的负数（实测 -29）。
+    unreadable = False
+    for _ in range(3):
+        for _ in range(10):
+            if not _com_pending():
+                break
+            time.sleep(0.4)
+        if not _com_pending():
+            break
+        sendinput.focus_drawing_view(hwnd)
+        sendinput.send_escape(2)
+        time.sleep(1.2)
+    if _com_pending():
+        # 面板关不掉：不要把它当成 0 个实体，宁可报不确定
+        unreadable = True
+        after = {"total": None, "typed": None}
+    else:
+        after = acad_conn._com(_count_impl, {"kind": verify_type})
+        if after.get("total") is None:
+            unreadable = True
     tail_after = winmsg.command_tail(pid, 400) if pid else ""
-    total_delta = int(after.get("total", 0)) - int(before.get("total", 0))
+    if before.get("total") is None or after.get("total") is None:
+        total_delta = None
+    else:
+        total_delta = int(after["total"]) - int(before["total"])
     typed_delta = None
     if verify_type and after.get("typed") is not None and before.get("typed") is not None:
         typed_delta = int(after["typed"]) - int(before["typed"])
 
-    ok = (typed_delta if typed_delta is not None else total_delta) >= expect_delta
+    base = typed_delta if typed_delta is not None else total_delta
+    hit = False if base is None else base >= expect_delta
+    ok: Any = None if unreadable else bool(hit)
     return {
-        "ok": bool(ok),
+        "ok": ok,
+        "count_unreliable": unreadable,
         "command": command,
         "clicked": clicked,
         "label_clicks": label_clicks,
@@ -482,5 +587,10 @@ def run_select_command(command: str, handles: list[str],
         "verify_type": verify_type,
         "tail_before": tail_before,
         "tail_after": tail_after,
-        "message": None if ok else "命令发出去并点了，但没有达到预期的实体增量，看 tail_after 的提示。",
+        "message": (
+            "命令发出去了，但 AutoCAD 的参数面板还挡着 COM，读不到实体数。"
+            "这次不要当成失败：看 tail_after 和图形确认结果。"
+        ) if unreadable else (
+            None if hit else "命令发出去并点了，但没有达到预期的实体增量，看 tail_after 的提示。"
+        ),
     }

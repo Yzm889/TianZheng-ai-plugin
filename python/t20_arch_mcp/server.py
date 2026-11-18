@@ -29,7 +29,7 @@ GUI_SELECT_COMMANDS = (
 # 初次使用、或者遇到选择类命令点不动时，照这句回复用户即可（短，一句）。
 GUI_HINT_ZH = (
     "温馨提示：这个插件有几类命令（半径/直径标注、面积统计、填充面积、文字加框、"
-    "车位编号、房间排序、墙体分段、单轴标注）必须先在图里用鼠标点中对象，纯文本/"
+    "车位编号、房间排序、墙体分段、单轴标注、轴网标注）必须先在图里用鼠标点中对象，纯文本/"
     "终端型 AI 点不了，会停在“选择对象”。如果你想要更顺手的操作、并用上这些功能，"
     "建议改用**具备桌面 GUI 控制能力的 AI 工具**（例如豆包 PC 客户端）来驱动本插件："
     "它能截图定位、自己算屏幕坐标、真的把鼠标点下去，功能更全、体验更顺。"
@@ -41,7 +41,7 @@ GUI_STEPS_ZH = (
     "1. 先在当前环境里把能做的做完：轴网、墙体、房间、门窗、图框、表格、导出、查询"
     "这些都不需要鼠标，直接用就行。\n"
     "2. 做到要点选的那几类命令（半径/直径标注、面积统计、填充面积、文字加框、"
-    "房间排序、墙体分段、单轴标注、车位编号）之前，先把这张图存盘（save_drawing），"
+    "房间排序、墙体分段、单轴标注、轴网标注、车位编号）之前，先把这张图存盘（save_drawing），"
     "然后停手。\n"
     "3. 打开豆包 PC 客户端（或任何能自己截屏、点鼠标的 AI 工具），把这张 dwg 的完整"
     "路径发给它，说“接着把剩下的标注/统计补上”。它在同一个 CAD 里点完，你把结果"
@@ -668,18 +668,32 @@ if gui_select.gui_enabled():
             "statistics, hatch area, text frames, parking numbers, room sorting and "
             "wall splitting get done -- none of them can be completed over COM. "
             "verify_type is a type name for count_entities (e.g. TCH_DIMENSION); "
-            "expect_delta is how many new objects to expect."
+            "expect_delta is how many new objects to expect. "
+            "points/label_points are world coords. screen_points/screen_label_points "
+            "are absolute screen pixels read off a screenshot: use them when the target "
+            "is a 1 px line (axis grids, walls) or when the view was zoomed by keyboard, "
+            "because world->screen drifts there. "
+            "Axis-grid annotation: command='TMULTAXISDIM', screen_points=[point on the "
+            "start axis, point on the end axis] -- the command then asks for axes to "
+            "leave out, and one Enter accepts none. "
+            "ok=false means nothing was added; ok=null with count_unreliable=true means "
+            "AutoCAD kept blocking COM afterwards, so the counts could not be read -- "
+            "look at the drawing before calling it a failure."
         ),
     )
     def gui_select_command(command: str, handles: list[str] = [],
                            points: list[list[float]] = [],
                            label_points: list[list[float]] = [],
+                           screen_points: list[list[int]] = [],
+                           screen_label_points: list[list[int]] = [],
                            verify_type: str = "",
                            expect_delta: int = 1) -> str:
         try:
             return _dump(gui_select.run_select_command(
                 command, list(handles), list(points), list(label_points),
-                verify_type=verify_type, expect_delta=int(expect_delta)))
+                verify_type=verify_type, expect_delta=int(expect_delta),
+                screen_points=list(screen_points),
+                screen_label_points=list(screen_label_points)))
         except Exception as exc:  # noqa: BLE001
             return _dump({"ok": False, "error": str(exc)})
 

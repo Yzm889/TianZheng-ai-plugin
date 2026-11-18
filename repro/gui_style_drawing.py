@@ -5,7 +5,7 @@
     圆 → 半径标注 / 直径标注
     矩形 → 填充 → 填充面积表
     文字 → 文字加框
-    单轴标注、墙体分段
+    单轴标注、轴网标注、墙体分段
 
 用法：
     python repro/gui_style_drawing.py                 # 建到 %TEMP%\\gui_style.dwg 并导 PDF
@@ -205,6 +205,51 @@ def close_stale() -> list[str]:
     return list(closed or [])
 
 
+def red_axis_screen_points(hwnd: int) -> list[list[int]]:
+    """截图数红像素，给出轴网首末两根竖线的屏幕坐标。
+
+    为什么不用 world→screen：键盘 `ZOOM` 改得了画面，但 `ActiveViewport` 读回的
+    centre/viewsize 不跟着变（scale 恒 0.042），按缩放算出来的点会偏，点 1 px
+    细线必然落空。所以直接看画面：竖轴取像素列直方图的第一个/最后一个峰，
+    y 取前两根横轴的中点（这样两点都落在同一根横轴之间，一定命中竖线）。
+    """
+    from PIL import ImageGrab
+
+    left, top, right, bottom = win32gui.GetWindowRect(hwnd)
+    img = ImageGrab.grab(bbox=(left, top, right, bottom), all_screens=True)
+    px = img.convert("RGB").load()
+    width, height = img.size
+
+    def is_red(p: tuple[int, int, int]) -> bool:
+        r, g, b = p
+        return r > 140 and g < 70 and b < 70
+
+    cols = {x: sum(1 for y in range(150, height - 120) if is_red(px[x, y]))
+            for x in range(200, width)}
+    groups: list[list[int]] = []
+    for x in sorted(k for k, v in cols.items() if v > 40):
+        if groups and x - groups[-1][-1] <= 2:
+            groups[-1].append(x)
+        else:
+            groups.append([x])
+    vx = [sum(g) // len(g) for g in groups]
+
+    rows = {y: sum(1 for x in range(200, width) if is_red(px[x, y]))
+            for y in range(150, height - 120)}
+    groups = []
+    for y in sorted(k for k, v in rows.items() if v > 100):
+        if groups and y - groups[-1][-1] <= 2:
+            groups[-1].append(y)
+        else:
+            groups.append([y])
+    hy = [sum(g) // len(g) for g in groups]
+
+    if len(vx) < 2 or len(hy) < 2:
+        return []
+    y_click = (hy[0] + hy[1]) // 2
+    return [[left + vx[0], top + y_click], [left + vx[-1], top + y_click]]
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", default=os.path.join(os.environ.get("TEMP", "."),
@@ -348,8 +393,26 @@ def main() -> None:
     else:
         record("单轴标注 TSingleAxisDim", False, "图里没有 DOTE 轴线")
 
-    # ---------------- 10. 墙体分段（GUI） ----------------
-    print("\n[10] 墙体分段 TPartwall")
+    # ---------------- 10. 轴网标注（GUI：截图定位轴网竖线） ----------------
+    print("\n[10] 轴网标注 TMultAxisDim（GUI：截图定位轴网竖线）")
+    gui_drive.zoom_window_kb([-1500, -1500], [6300, 9000])
+    time.sleep(1.0)
+    axis_pts = red_axis_screen_points(hwnd)
+    if axis_pts:
+        multi = gui_select.run_select_command(
+            "TMULTAXISDIM", [], screen_points=axis_pts,
+            verify_type="TDbAxisLabelSet", expect_delta=1, wait=3.0)
+        record("轴网标注 TMultAxisDim", multi.get("ok") is True,
+               {"typed_delta": multi.get("typed_delta"),
+                "total_delta": multi.get("total_delta"),
+                "points": axis_pts})
+        if multi.get("ok") is not True:
+            print(f"        · {multi.get('message')}")
+    else:
+        record("轴网标注 TMultAxisDim", False, "截图里没找到红色轴网")
+
+    # ---------------- 11. 墙体分段（GUI） ----------------
+    print("\n[11] 墙体分段 TPartwall")
     wall_handles = handles_of("TDbWall")
     if wall_handles:
         seg = gui_drive.run_prompt_driven(
@@ -362,8 +425,8 @@ def main() -> None:
     else:
         record("墙体分段 TPartwall", False, "图里没有墙")
 
-    # ---------------- 11. 存盘 / 导 PDF / 截图 ----------------
-    print("\n[11] 存盘 + 导出")
+    # ---------------- 12. 存盘 / 导 PDF / 截图 ----------------
+    print("\n[12] 存盘 + 导出")
     gui_drive.ensure_ready(hwnd, attempts=6)
     saved_ok = False
     try:

@@ -188,15 +188,16 @@ consider driving this plugin from an AI tool with GUI control.
 插件里这几条命令**必须在图形里用鼠标点中对象**，纯文本宿主点不动：
 半径标注 `TDimRad`、直径标注 `TDimDia`、面积统计 `TCountArea`、填充面积
 `THatchArea`、文字加框 `TTextAddFrame`、车位编号 `TParkingNumber`、
-房间排序 `TSortSpace`、墙体分段 `TPartwall`、单轴标注 `TSingleAxisDim`。
+房间排序 `TSortSpace`、墙体分段 `TPartwall`、单轴标注 `TSingleAxisDim`、
+轴网标注 `TMultAxisDim`。
 
 所以本插件对宿主 AI 有一条固定话术（`capability_report` 返回的 `user_hint_zh`，
 纯文本宿主跑选择类命令时也会随结果一起带回）。宿主应在**第一次会话**、以及
 **第一次遇到选择类命令点不动**时，把这句话转述给用户，之后不要反复重复：
 
 > 温馨提示：这个插件有几类命令（半径/直径标注、面积统计、填充面积、文字加框、
-> 车位编号、房间排序、墙体分段、单轴标注）必须先在图里用鼠标点中对象，纯文本/
-> 终端型 AI 点不了，会停在“选择对象”。如果你想要更顺手的操作、并用上这些功能，
+> 车位编号、房间排序、墙体分段、单轴标注、轴网标注）必须先在图里用鼠标点中对象，
+> 纯文本/终端型 AI 点不了，会停在“选择对象”。如果你想要更顺手的操作、并用上这些功能，
 > 建议改用**具备桌面 GUI 控制能力的 AI 工具**（例如豆包 PC 客户端）来驱动本插件：
 > 它能截图定位、自己算屏幕坐标、真的把鼠标点下去，功能更全、体验更顺。
 

@@ -21,6 +21,26 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   - 新增 `repro/gui_style_drawing.py`：一份脚本把 11 步（轴网→墙体→房间→房间排序→
     面积统计→圆+半径→弧+直径→填充+填充面积→文字加框→单轴标注→墙体分段）全跑一遍，
     自己核对实体增量，**11/11 通过**；成图 `docs/GUI功能验收样式图.png` / `.dwg`。
+- **第 9 类 GUI 能力：轴网标注 `TMultAxisDim`**（2026-11-18）
+  - 这条命令走"选择循环"：选起始轴线 → 选终止轴线 → 问「请选择不需要标注的轴线」→
+    生成，然后**回到起点继续问**。参数面板是独立的 `#32770` 浮动对话框，全程挡 COM。
+  - `gui_select_command` 新增 `screen_points` / `screen_label_points`（绝对屏幕像素）。
+    原因：键盘 `ZOOM` 改得了画面，但 `ActiveViewport` 读回的 centre/viewsize 不跟着变
+    （`scale` 恒 0.042），world→screen 会算偏，点 1 px 细线必然落空。改为截图 +
+    红色像素列/行直方图定位轴网：竖轴 `x=830/898/1018/1103`（间距 68/120/85 px，
+    对应开间 1200/2100/1500）、横轴 `y=300/487/640/725`（间距 187/153/85，对应
+    进深 3300/2700/1500）。
+  - 修掉三个把"成功"误报成"失败"的时序 bug：
+    ① 收尾回车只按一次、又按得太早 → 命令停在「不需要标注的轴线」，之后读到
+       `total=0`、delta 算成 -29。改为**先探测是否还在等输入，被拒才按、通了就停**
+       （最多 3 次；多按会重复上一条命令）。
+    ② 统计前不等 COM 恢复，`_count_impl` 的 `total` 兜底成 0。改为先轮询等 COM；
+       仍被面板挡住就先 `focus_drawing_view` + `ESC` 关掉面板再统计。
+    ③ `_com_pending()` 原来用 `lambda: 0` 做探针，压根不碰文档、永远显示"通"，
+       会误判成"命令已收尾"。改为真读一次 `ModelSpace.Count`。
+  - 读不到统计时返回 `ok: null` + `count_unreliable: true`，不再把"读不到"当 0。
+  - 实测（样图副本）：24 → 29（`TDbAxisLabelSet` 1→2、`TDbDimension2` 0→4）；
+    同图再跑一次 29 → 34（2→3、4→8）。两次都是 `ok=true`。
 - **给 DSH 用户的 GUI 提示落地**：`capability_report` 返回固定话术 `user_hint_zh`
   （初次会话说一次、第一次遇到选择类命令点不动再说一次，不要每轮重复），以及
   分步操作说明 `user_steps_zh`（用户追问“那我该怎么操作”时原样照抄）：
