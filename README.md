@@ -167,6 +167,22 @@ Measured 8/8: 7 walls (4 exterior segments + the interior wall splitting them),
 
 完整步骤与踩坑记录见 [docs/插入门窗指南.md](docs/插入门窗指南.md)。
 
+## Using it from an AI tool that can drive a mouse
+
+The server is a plain MCP stdio process, so any MCP host can talk to it — DSH, or a
+desktop assistant that can also move a pointer (Doubao's PC client, for instance).
+The only difference is the capability tier:
+
+| Host | Tools | What it can do |
+|---|---|---|
+| stdio only (a chat/API client) | 29 | build walls, doors, axes, rooms, dimensions, plot to PDF |
+| with desktop control, `T20_HOST_GUI=1` | 31 | everything above, plus select-type commands that need real clicks |
+
+A GUI host is simply more comfortable to work in: it can answer Tianzheng's own
+dialogs and pick entities on screen instead of asking the user to do it by hand.
+That is also why `capability_report` tells a GUI-less host, in so many words, to
+consider driving this plugin from an AI tool with GUI control.
+
 ## Install
 
 Installed from the Git commit (this package is distributed via Git, not npm):
