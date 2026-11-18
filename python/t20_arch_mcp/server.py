@@ -434,7 +434,13 @@ def summarize_entity_classes() -> str:
         "spec = {origin:[x,y], stage:'all|walls|openings|dimensions', "
         "walls:[{x1,y1,x2,y2}], wall_template?:<handle>, openings:[{type,x,y}], "
         "opening_templates?:{door:<h>,window:<h>}, "
-        "dimensions:[{kind,p1,p2,pos}]}"
+        "dimensions:[{kind,p1,p2,pos}]}. "
+        "dimension kind='linear' is a point-to-point dimension; kind='axis' runs "
+        "the Tianzheng axis-grid annotation and needs p1/p2 to sit exactly on real "
+        "axis lines (LINE entities on layer DOTE) -- if the drawing has no axis "
+        "grid yet, draw one first with 绘制轴网 HZZW; the call reports that instead "
+        "of sending a doomed command. Axis dimensions are annotated inside this "
+        "tool (via the bare in-thread implementation, never a nested COM hop)."
     ),
 )
 def build_plan(spec: str) -> str:

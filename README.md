@@ -611,6 +611,12 @@ are themselves `_com`-wrapped. Because there is a single COM worker thread, the
 inner call waits forever on the thread that is executing the outer one. Inside a
 `_com` function, always call the `_..._impl` helpers directly.
 
+Axis dimensions used to be the one thing `build_plan` had to skip for exactly
+this reason. They now run inside the builder by calling the bare
+`_annotate_axis_impl` (no `_com` hop), after a pre-check that the drawing
+actually has axis lines on layer `DOTE` — ZWBZ refuses any point that is not on
+a real axis.
+
 ### 29. DXF export replaces PDF on installs without a plotter
 `PlotToFile` needs a `.pc3` device and this machine has none, so PDF output cannot be
 built. DXF goes through `SaveAs(path, 16)` -- no plotting stack involved -- so `导出DXF`

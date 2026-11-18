@@ -4,6 +4,33 @@ All notable changes to this project are documented here.
 Format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+
+- **`build_plan` 现在能在内部做轴网标注（F5）** — `dimensions` 里 `kind: "axis"`
+  不再被跳过，改为调用裸实现 `tianzheng_runner._annotate_axis_impl`
+  （不经过 `_com`，所以不会在同一个 COM 工作线程上自锁）。
+- **轴网预检** — 动手前先数 `DOTE` 图层的 `LINE`：为 0 就直接报
+  「请先用绘制轴网 HZZW 建轴网」，并把 `axis_dote_lines` 写进返回值，不盲发注定
+  失败的 ZWBZ。轴网标注成功的条目记在 `axis_labels`（含 before/after/delta）。
+- 6 条新单测 `tests/test_scene_build_axis.py`（不需要 CAD）：轴网分支、偏移、
+  缺轴线预检、失败诊断、线性标注回归、混合计划。
+
+### Verification status
+
+单元测试 `50 passed / 74 subtests`。
+
+真实图纸实测通过（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线）：
+
+```
+标注前  {"LINE": 8}
+标注后  {"LINE": 8, "TDBDIMENSION2": 4, "TDBAXISLABELSET": 1}
+build_plan -> dimension_count 1 · axis_dote_lines 8 · axis_labels[0].counts 0 -> 1
+```
+
+复现脚本 `repro/f5_axis_check.py`（`--inspect` 只看不发命令）。
+
 ## [0.7.0] — 2026-11-17
 
 **A complete, common architectural plan can now be produced from natural language.**

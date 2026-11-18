@@ -1,7 +1,8 @@
 # 交接文档（HANDOFF）
 
 > 给接手这个项目的 AI 或开发者。
-> 写于 2026-11-18，对应提交 `571e39b`。
+> 写于 2026-11-18，基线提交 `375c313`，其上叠加了 F5（`build_plan` 轴网标注，
+> 见 §10）。
 > **这份文档的价值在于：省掉你重新踩一遍我踩过的坑的时间。** 每条结论都有实测依据。
 
 ---
@@ -43,7 +44,7 @@ AutoCAD 窗口，让天正自己执行。
 ```powershell
 $py = "C:\Users\<你>\AppData\Local\Programs\Python\Python313\python.exe"
 cd python
-& $py -m pytest tests -q          # 应输出 44 passed
+& $py -m pytest tests -q          # 应输出 50 passed
 ```
 
 ### 跑起来
@@ -246,6 +247,7 @@ template_clone.clone_walls_batch("2C6", [
 | 13 | 杀毒软件会静默杀掉天正 | 检查 `uxtheme.dll` 是否被隔离 |
 | 14 | `DataStore.dbf` 只读会中断命令 | `attrib -R` 后重启 CAD |
 | 15 | 提权不一致导致 COM 失败 `0x80070522` | DSH 和 CAD 必须同权限级别 |
+| 16 | 直方图的 key 是**归一后**的类名（`TDBAXISLABELSET`），拿 `TCH_AXIS_LABEL` 去查永远得 0 | 计数一律走 `count_entities()`（带别名匹配），直方图只用来读原始类名 |
 
 ---
 
@@ -279,7 +281,7 @@ CommandSpec(
 ```powershell
 cd python
 python -m pytest tests -q
-# 44 passed, 74 subtests
+# 50 passed, 74 subtests
 ```
 
 现有测试文件：
@@ -287,6 +289,8 @@ python -m pytest tests -q
 - `test_template_request.py` — 缺模板时的请求文案
 - `test_prereq_check.py` — 开工前预检
 - `test_opening_assist.py` — 门窗助手
+- `test_scene_build_axis.py` — `build_plan` 内部轴网标注（F5），守住「不嵌套
+  `_com`」和「没 DOTE 轴线先提示」两条原则
 
 **测试里有一些"原则守护"用例**，例如：
 ```python
@@ -315,12 +319,45 @@ for bad in ("安装目录", "图库", "搜索"):
 
 ## 10. 当前状态与未完成
 
-### 已完成并推送
+### 已完成
 
 ```
-53 条指令 · 24 个 MCP 工具 · 44 passed / 74 subtests
-本地 = 远端 = 571e39b · 工作区 clean
+53 条指令 · 24 个 MCP 工具 · 50 passed / 74 subtests
+本地领先远端 1 个提交（F5）· 工作区 clean
 ```
+
+### 已完成并实测：F5（`build_plan` 内部的轴网标注）
+
+`build_plan` 的 `dimensions` 里 `kind: "axis"` 不再跳过，改为在 builder 内部调
+`tianzheng_runner._annotate_axis_impl`（裸实现，不走 `_com`，因此不会自锁）。
+动手前先数 `DOTE` 图层的 `LINE`：为 0 就直接返回「请先用绘制轴网 HZZW 建轴网」，
+并写 `axis_dote_lines` 进结果；成功的条目记在 `axis_labels`。
+
+**实测证据**（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线 = 4 竖 + 4 横）：
+
+```
+标注前  类型直方图 {"LINE": 8}
+取点    22092.60,26686.98 → 26892.60,26686.98   （两根最外侧竖轴，同一 y）
+返回    dimension_count 1 · axis_dote_lines 8 · axis_labels[0].counts 0 → 1
+标注后  类型直方图 {"LINE": 8, "TDBDIMENSION2": 4, "TDBAXISLABELSET": 1}
+```
+
+轴号集 `0 → 1`、轴间尺寸 `0 → 4`，与本项目对 ZWBZ 的历史实测（1 个轴号集 +
+4 个 `TDbDimension2`）一致。复现：
+
+```powershell
+& $py repro\f5_axis_check.py            # 真的标一次并对比前后
+& $py repro\f5_axis_check.py --inspect  # 只看几何与现状，不发命令
+```
+
+> 脚本里有个坑：直方图把类名归一成 `TDBAXISLABELSET`，直接找
+> `TCH_AXIS_LABEL` 会永远得到 0，必须走 `count_entities` 的别名匹配。
+
+### 可以继续做的
+
+1. **门窗宽度区分模板** —— 现在所有门窗宽度都是模板的宽度
+2. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
+3. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
 
 ### 仓库
 
@@ -347,7 +384,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 
 > 写这份文档时的实测状态（2026-11-18）：
 > ```
-> pytest            44 passed, 74 subtests          ✅
+> pytest            50 passed, 74 subtests          ✅
 > server import     OK                              ✅
 > CAD 连接          失败（AutoCAD 未运行，非代码问题）
 > ```
@@ -361,7 +398,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 # 1) 确认代码无损坏（不需要 CAD）
 cd C:\Users\19891\Desktop\插件创作\python
 & $py -m pytest tests -q
-# 期望：44 passed, 74 subtests passed
+# 期望：50 passed, 74 subtests passed
 
 # 2) 确认 MCP 服务可导入（不需要 CAD）
 & $py -c "import sys;sys.path.insert(0,'.');import t20_arch_mcp.server;print('OK')"

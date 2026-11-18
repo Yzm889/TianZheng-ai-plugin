@@ -126,8 +126,18 @@ def build_plan(spec: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
       "wall_template": "句柄",            # 省略则自动扫第一面墙
       "openings":      [{"type","x","y"}, ...],
       "opening_templates": {"door": "句柄", "window": "句柄"},
-      "dimensions":    [{"kind": "linear"|"axis", "p1": [...], "p2": [...]}, ...]
+      "dimensions":    [{"kind": "linear"|"axis", "p1": [...], "p2": [...], "pos": [...]}, ...]
     }
+
+    dimensions 的两种 kind：
+      linear —— 逐点标注 TDimMP，p1/p2/pos 三个点。
+      axis   —— 轴网标注 ZWBZ，p1/p2 必须落在真实轴线上（天正画在 DOTE 图层的
+                LINE）；这一点由 build_plan 预检，没轴线就直接报「先画轴网」，
+                不会盲发命令。
+
+    F5 说明：轴网标注同样支持在本函数内部执行。关键在于只调用裸实现
+    `_annotate_axis_impl`（它不经过 _com），而不是 `annotate_axis`（包了 _com）。
+    后者会在同一个 COM 工作线程里等自己，永久死锁。
     """
     return _com(_build_impl, dict(spec or {}), float(timeout), timeout=timeout + 120.0)
 
@@ -234,16 +244,45 @@ def _build_impl(spec: dict[str, Any], timeout: float) -> dict[str, Any]:
     if stage in ("all", "dimensions") and spec.get("dimensions"):
         try:
             made, errs = [], []
+            dote_lines: int | None = None  # 只为轴网预检算一次，用来留实测证据
             for idx, d in enumerate(spec["dimensions"]):
                 try:
                     kind = str(d.get("kind", "linear"))
                     if kind == "axis":
-                        # annotate_axis / run_with_dialog are _com-wrapped too, so they
-                        # cannot be nested inside build_plan without deadlocking the
-                        # single COM worker thread. Report clearly instead.
-                        errs.append(
-                            "dimension %d: 轴网类尺寸请单独调用 annotate_axis"
-                            "（build_plan 内部不能再嵌套 COM 调用）" % idx)
+                        # F5: annotate_axis() is _com-wrapped and would deadlock the
+                        # single COM worker thread we are already running on. The
+                        # bare _annotate_axis_impl() does no _com hop, so it is safe
+                        # to call from here.
+                        p1, p2 = d.get("p1"), d.get("p2")
+                        if not p1 or not p2:
+                            errs.append(
+                                "dimension %d: kind=axis 需要 p1/p2"
+                                "（两个精确落在轴线上的点）" % idx)
+                            continue
+                        if dote_lines is None:
+                            dote_lines = int(
+                                tianzheng_runner._count_type(doc, "LINE", layer="DOTE"))
+                            result["axis_dote_lines"] = dote_lines
+                        if dote_lines == 0:
+                            # ZWBZ 只认天正自己生成的轴线。先要组件，别盲发命令。
+                            errs.append(
+                                "dimension %d: 图中没有天正轴线（DOTE 图层的 LINE），"
+                                "轴网标注只能标真实轴线。请先用「绘制轴网 HZZW」建轴网，"
+                                "或改用 kind=linear 做逐点标注。" % idx)
+                            continue
+                        rr = tianzheng_runner._annotate_axis_impl(
+                            f"{float(p1[0]) + ox:g},{float(p1[1]) + oy:g}",
+                            f"{float(p2[0]) + ox:g},{float(p2[1]) + oy:g}",
+                            float(d.get("timeout", 30.0)),
+                        )
+                        if rr.get("success"):
+                            made.append(idx)
+                            result.setdefault("axis_labels", []).append(
+                                {"index": idx, "counts": rr.get("counts")})
+                        else:
+                            errs.append("dimension %d: %s" % (
+                                idx,
+                                rr.get("diagnosis") or rr.get("error") or "failed"))
                         continue
                     p1 = d["p1"]; p2 = d["p2"]; pos = d.get("pos", p1)
                     rr = tianzheng_runner._run_with_dialog_impl(
