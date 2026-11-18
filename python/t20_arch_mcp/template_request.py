@@ -30,8 +30,12 @@ TEMPLATE_GUIDE: dict[str, dict[str, Any]] = {
             "用鼠标在墙上点一下（这一步天正只接受鼠标，不接受坐标）",
             "回车结束",
         ],
-        "spec": "一樘门 + 一樘窗（各一个即可）；宽度不必精确，克隆时会缩放",
-        "why": "MC 的插入点必须鼠标点选，无法用坐标自动化，所以模板必须由人放一次",
+        "spec": "一樘门 + 一樘窗（各一个即可）；每一种宽度各建一樘",
+        "why": (
+            "MC 的插入点必须鼠标点选，无法用坐标自动化，所以模板必须由人放一次。"
+            "另外门窗的宽度是天正内部参数，克隆只能原样复制，"
+            "需要不同宽度就必须有不同的模板，并用 register_opening_template 登记宽度"
+        ),
     },
     "TDbColumn": {
         "name": "柱",
@@ -94,6 +98,50 @@ def missing_template_request(kind: str, needed_for: str = "") -> dict[str, Any]:
         "spec": g["spec"],
         "message": "\n".join(lines),
         "next": "放好之后告诉我，我扫描模板句柄并自动克隆出全部实例。",
+    }
+
+
+def missing_opening_width(kind: str, width: float, document: str | None = None) -> dict[str, Any]:
+    """缺某个宽度的门/窗模板时，给用户一份可直接照做的说明。
+
+    比 missing_template_request 更具体：说清楚要哪一樘、多宽、怎么登记。
+    """
+    kind_cn = "窗" if str(kind).lower().startswith("win") else "门"
+    try:
+        width_cn = "%g" % float(width)
+    except (TypeError, ValueError):
+        width_cn = str(width)
+
+    steps = [
+        "输入 MC 回车，弹出「门窗参数」对话框",
+        f"在「宽」里填 {width_cn}，回车确认（%s直接回车即可）" % ("先点【窗】图标再" if kind_cn == "窗" else ""),
+        "用鼠标在任意一段墙上点一下（天正只接受鼠标点选，不接受坐标）",
+        "把这一樘放在空白处就行，不必放到目标位置",
+        "告诉我它的句柄，我登记成 %s 宽的模板（register_opening_template）" % width_cn,
+    ]
+    lines = [
+        f"图上还没有 {width_cn} 宽的{kind_cn}模板，我不替你猜宽度。",
+        "",
+        "请在天正里建一樘，照着做：",
+    ]
+    for i, step in enumerate(steps, 1):
+        lines.append(f"  {i}. {step}")
+    lines += [
+        "",
+        "为什么必须这样做：门窗宽度是天正内部参数，克隆只能原样复制"
+        "（ScaleEntity 只改高度），所以每一种宽度都要有自己的模板。",
+    ]
+    return {
+        "ok": False,
+        "need_user_action": True,
+        "stage": "missing_opening_width",
+        "kind": "window" if kind_cn == "窗" else "door",
+        "kind_cn": kind_cn,
+        "width": width,
+        "command": "MC",
+        "steps": steps,
+        "message": "\n".join(lines),
+        "next": "建好之后调用 register_opening_template(handle, width) 登记，再重跑这条计划。",
     }
 
 

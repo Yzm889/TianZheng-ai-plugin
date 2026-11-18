@@ -12,8 +12,8 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import (acad_conn, env_check, native_tools, nl_dispatch, scene_build,
-               template_clone, tianzheng_query, tianzheng_runner)
+from . import (acad_conn, env_check, native_tools, nl_dispatch, opening_library,
+               scene_build, template_clone, tianzheng_query, tianzheng_runner)
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
@@ -411,6 +411,50 @@ def scan_templates() -> str:
 
 
 @mcp.tool(
+    name="register_opening_template",
+    description=(
+        "Record the REAL width (mm) of a door/window template that already exists in "
+        "the active drawing. MEASURED: Tianzheng exposes no width over COM -- GetXData "
+        "returns [null,null], Width/Height attributes are absent, and the bounding box "
+        "mixes width with height (a 1000-wide window measures 1000x975), so the width "
+        "must be told once by the caller. build_plan then only clones templates whose "
+        "recorded width matches the requested width; when none matches it asks the user "
+        "to create one at that width instead of silently cloning a wrong-width opening."
+    ),
+)
+def register_opening_template(handle: str, width: float, kind: str = "door",
+                              height: float = 0.0) -> str:
+    try:
+        document = acad_conn.active_document_name()
+        result = opening_library.register(
+            handle, width, kind,
+            height=(height or None),
+            document=document,
+        )
+        result["document"] = document
+        return _dump(result)
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="list_opening_templates",
+    description=(
+        "READ-ONLY: list door/window template widths recorded for the active drawing "
+        "(or a given document name). Use it to see which widths build_plan can honour."
+    ),
+)
+def list_opening_templates(document: str = "") -> str:
+    try:
+        scope = document or acad_conn.active_document_name()
+        return _dump({"ok": True, "document": scope,
+                      "entries": opening_library.entries(scope),
+                      "state_file": opening_library._state_file()})
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
     name="summarize_entity_classes",
     description=(
         "READ-ONLY: count model-space entities by native class name (TDbWall, "
@@ -432,9 +476,15 @@ def summarize_entity_classes() -> str:
         "independent; on failure the completed stages are kept and reported via "
         "completed_stages / failed_stage / partial_result. "
         "spec = {origin:[x,y], stage:'all|walls|openings|dimensions', "
-        "walls:[{x1,y1,x2,y2}], wall_template?:<handle>, openings:[{type,x,y}], "
-        "opening_templates?:{door:<h>,window:<h>}, "
+        "walls:[{x1,y1,x2,y2}], wall_template?:<handle>, "
+        "openings:[{type,x,y,width?,template?}], "
+        "opening_templates?:{door:[<handle>|{handle,width}],window:[...]}, "
         "dimensions:[{kind,p1,p2,pos}]}. "
+        "Openings honour an explicit width: Tianzheng exposes no opening width, so "
+        "the call only clones a template whose width was recorded (within 50 mm) and "
+        "otherwise returns stage='missing_opening_width' naming the width you must "
+        "create first -- it never places a wrong-width opening. Without width it falls "
+        "back to the first template and flags width_unverified. "
         "dimension kind='linear' is a point-to-point dimension; kind='axis' runs "
         "the Tianzheng axis-grid annotation and needs p1/p2 to sit exactly on real "
         "axis lines (LINE entities on layer DOTE) -- if the drawing has no axis "

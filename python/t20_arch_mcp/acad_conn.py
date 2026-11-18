@@ -376,6 +376,25 @@ def get_active_document_info() -> dict[str, Any]:
     return _com(_describe_active, timeout=120)
 
 
+def active_document_name() -> str | None:
+    """Active drawing's Name, read on the COM worker thread.
+
+    Returns None when AutoCAD is not running or has no document, so callers that
+    merely need a scope key (e.g. the opening-template registry) never fail.
+    """
+    try:
+        return _com(_active_name_impl, timeout=30)
+    except Exception:
+        return None
+
+
+def _active_name_impl() -> str | None:
+    try:
+        return doc_name(_active_document(), None)
+    except Exception:
+        return None
+
+
 def _describe_active() -> dict[str, Any]:
     app = _attach_app()
     result: dict[str, Any] = {}

@@ -13,7 +13,8 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .acad_conn import AcadError, _active_document, _attach_app, _com, allow_foreign_document, is_owned_document
+from .acad_conn import (AcadError, _active_document, _attach_app, _com,
+                        allow_foreign_document, doc_name, is_owned_document)
 
 
 def _bbox(ent: Any) -> tuple[float, float, float, float] | None:
@@ -22,6 +23,26 @@ def _bbox(ent: Any) -> tuple[float, float, float, float] | None:
         return (float(mn[0]), float(mn[1]), float(mx[0]), float(mx[1]))
     except Exception:
         return None
+
+
+# 墙厚合理上限（mm）。门窗包围盒里短的那一边若小于它，就当墙厚看，
+# 长的那一边才是宽度 —— 这是"能确定宽度"的唯一几何判据。
+OPENING_THIN_MAX = 260.0
+
+
+def _opening_width_hint(box: tuple[float, float, float, float] | None):
+    """从包围盒猜门窗宽度。返回 (宽度或 None, 依据)。
+
+    实测（2026-11-18）：天正门窗的包围盒常常是"宽 × 高"，短边不是墙厚，
+    这时不能猜，必须让用户登记，否则会把高度当宽度。
+    """
+    if not box:
+        return None, "no_bbox"
+    w = box[2] - box[0]
+    h = box[3] - box[1]
+    if min(w, h) <= OPENING_THIN_MAX:
+        return round(max(w, h), 1), "plan_bbox"
+    return None, "ambiguous"
 
 
 def _vpt(x: float, y: float, z: float = 0.0):
@@ -37,7 +58,10 @@ def scan_templates(timeout: float = 120.0) -> dict[str, Any]:
 
 
 def _scan_impl() -> dict[str, Any]:
+    from . import opening_library
+
     doc = _active_document()
+    registered = opening_library.entries(doc_name(doc, None))
     groups: dict[str, list[dict[str, Any]]] = {}
     try:
         n = doc.ModelSpace.Count
@@ -52,14 +76,24 @@ def _scan_impl() -> dict[str, Any]:
         if not any(k in name for k in ("WALL", "OPENING", "COLUMN", "STAIR", "SPACE", "SLAB")):
             continue
         box = _bbox(e)
+        handle = str(getattr(e, "Handle", ""))
         entry = {
-            "handle": str(getattr(e, "Handle", "")),
+            "handle": handle,
             "type": name,
             "layer": str(getattr(e, "Layer", "")),
             "bbox": [round(v, 1) for v in box] if box else None,
         }
         if box:
             entry["size"] = [round(box[2] - box[0], 1), round(box[3] - box[1], 1)]
+        if "OPENING" in name:
+            hint, source = _opening_width_hint(box)
+            entry["width_hint"] = hint
+            entry["width_hint_source"] = source
+            for reg in registered:
+                if str(reg.get("handle", "")).upper() == handle.upper():
+                    entry["declared_width"] = reg.get("width")
+                    entry["declared_kind"] = reg.get("kind")
+                    break
         groups.setdefault(name, []).append(entry)
 
     result: dict[str, Any] = {
@@ -144,7 +178,15 @@ def _clone_impl(template_handle: str, targets: list[dict[str, Any]],
                 copy.Rotate(_vpt(cx, cy), math.radians(rotate_deg))
             if tgt.get("layer"):
                 copy.Layer = str(tgt["layer"])
-            created.append({"handle": str(getattr(copy, "Handle", "")), "at": [cx, cy]})
+            # 实测证据：克隆后这个对象自己量出来的尺寸。包围盒可能含三维高度，
+            # 所以只报原始数字，供调用方核对，不擅自换算成"宽度"。
+            copy_box = _bbox(copy)
+            created.append({
+                "handle": str(getattr(copy, "Handle", "")),
+                "at": [cx, cy],
+                "size": ([round(copy_box[2] - copy_box[0], 1),
+                          round(copy_box[3] - copy_box[1], 1)] if copy_box else None),
+            })
         except Exception as exc:  # noqa: BLE001
             errors.append(f"target {idx}: {type(exc).__name__}: {exc}")
 

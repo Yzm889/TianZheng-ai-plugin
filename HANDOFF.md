@@ -44,7 +44,7 @@ AutoCAD 窗口，让天正自己执行。
 ```powershell
 $py = "C:\Users\<你>\AppData\Local\Programs\Python\Python313\python.exe"
 cd python
-& $py -m pytest tests -q          # 应输出 50 passed
+& $py -m pytest tests -q          # 应输出 66 passed
 ```
 
 ### 跑起来
@@ -85,7 +85,7 @@ python/t20_arch_mcp/
 ├── nl_catalog.py        ★ 53 条指令的规格表（改这里就加指令）
 ├── nl_parser.py            自然语言 → 意图解析
 ├── nl_dispatch.py          意图 → 实际调用 + 结果摘要
-├── server.py               MCP 服务入口，24 个工具
+├── server.py               MCP 服务入口，26 个工具
 ├── sendinput.py            SendInput 键鼠模拟、焦点管理
 ├── winmsg.py               窗口消息、命令行文本读取
 ├── dialog.py               天正式 #32770 对话框的枚举与按钮点击
@@ -93,6 +93,7 @@ python/t20_arch_mcp/
 ├── template_clone.py    ★ 模板克隆（复制已有天正对象，见 §4）
 ├── scene_build.py         分阶段建图 walls→openings→dimensions
 ├── opening_assist.py    ★ 门窗位置提示（见 §5）
+├── opening_library.py   ★ 门窗模板宽度登记表（宽度读不出来，只能登记，见 §5.1）
 ├── prereq_check.py         开工前需求预检
 ├── template_request.py     缺模板时给用户的组件规格说明
 ├── tianzheng_query.py      实体统计、类型直方图
@@ -144,7 +145,7 @@ acad_conn.remember_active_document(doc)   # 或显式登记
 | 其他 | 台阶 / 坡道 / 任意坡顶 / 剖面墙 / 双线楼板 | `TJ` / `PD` / `RYPD` / `sdwall` / `sdfloor` |
 | 排版 | 排版 / 套版 / 图框清单 | 组合指令 |
 | 导出 | 导出DXF | `SaveAs(type=16)` |
-| 辅助 | 扫描模板 / 实体分类 / 开工前检查 / 插入门窗助手 | 本插件自研 |
+| 辅助 | 扫描模板 / 实体分类 / 开工前检查 / 插入门窗助手 / 登记门窗模板宽度 | 本插件自研 |
 
 ### 明确放弃的（不要浪费时间重试）
 
@@ -154,7 +155,7 @@ acad_conn.remember_active_document(doc)   # 或显式登记
 | PDF 导出 | 机器上没有 `.pc3` 绘图仪配置，`PlotToFile` 写不出文件 |
 | 立面 / 剖面（`TBudElev` / `TBudSect`） | 必须先在「工程管理」建工程 + 楼层表，纯 UI 操作 |
 | 轴网自定义开间 | 对话框里的 Axf 自绘控件，无法写入 |
-| 门窗宽度修改 | `ScaleEntity` 只改高度，宽度是天正内部参数 |
+| 门窗宽度修改 | `ScaleEntity` 只改高度，宽度是天正内部参数（要不同宽度只能建不同宽度的模板并登记，见 §5.1） |
 
 ---
 
@@ -226,6 +227,33 @@ template_clone.clone_walls_batch("2C6", [
 ```
 天正的墙**永远是一个完整对象**，洞口信息存内部数据，不会把墙拆开。
 
+### 5.1 门窗宽度：读不出来，只能登记
+
+**为什么读不出来（实测 2026-11-18，`Drawing31.dwg` 的 4 个 `TDbOpening`）**：
+
+| 尝试 | 结果 |
+|---|---|
+| `GetXData("TCH"/"TDb"/"TDbOpening"/...)` | 全部 `[null, null]` |
+| `Width` / `Height` / `Rotation` 属性 | 读不到（AttributeError） |
+| `GetBoundingBox` | 混了高度：1000 宽 → `1000×975`；900 宽 → `900×877.5`；1800 宽 → `1800×1755` |
+
+所以 **不要试图从几何或 XData 猜宽度**，会猜错。正确做法是登记：
+
+```python
+opening_library.register("4C4", 1000, "window", document=当前图纸名)  # 只登记一次，持久化
+```
+
+`build_plan` 的 `openings` 里给了 `width` 时，只在登记过的同宽度模板（±50 mm）里选；
+选不到就返回 `stage: "missing_opening_width"`，把"要建哪一樘、多宽、怎么登记"讲清楚，
+**一个都不克隆**。没给 `width` 时退回第一个模板，但结果里带 `width_unverified` 警告。
+
+实测证据（临时副本，`repro/opening_width_check.py`）：
+
+```
+A. 声明 1000 宽 + 模板 4C4  -> TDbOpening 4 -> 5，成品包围盒 1000×975
+B. 要 1500 宽，模板只有 1000 -> 拒绝动手，TDbOpening 停在 5
+```
+
 ---
 
 ## 6. 坑清单（按重要性排序）
@@ -248,6 +276,7 @@ template_clone.clone_walls_batch("2C6", [
 | 14 | `DataStore.dbf` 只读会中断命令 | `attrib -R` 后重启 CAD |
 | 15 | 提权不一致导致 COM 失败 `0x80070522` | DSH 和 CAD 必须同权限级别 |
 | 16 | 直方图的 key 是**归一后**的类名（`TDBAXISLABELSET`），拿 `TCH_AXIS_LABEL` 去查永远得 0 | 计数一律走 `count_entities()`（带别名匹配），直方图只用来读原始类名 |
+| 17 | 门窗宽度**读不出来**（XData 空、无 Width 属性、包围盒混高度），`ScaleEntity` 只改高度 | 用 `register_opening_template` 登记宽度，`build_plan` 按登记值匹配；读不到就报错，不许猜 |
 
 ---
 
@@ -281,7 +310,7 @@ CommandSpec(
 ```powershell
 cd python
 python -m pytest tests -q
-# 50 passed, 74 subtests
+# 66 passed, 74 subtests
 ```
 
 现有测试文件：
@@ -291,6 +320,9 @@ python -m pytest tests -q
 - `test_opening_assist.py` — 门窗助手
 - `test_scene_build_axis.py` — `build_plan` 内部轴网标注（F5），守住「不嵌套
   `_com`」和「没 DOTE 轴线先提示」两条原则
+- `test_opening_library.py` — 门窗模板宽度登记表（按图纸分区、容差、种类不串）
+- `test_scene_build_openings.py` — 宽度路由：命中才克隆、缺宽度先要模板、没给
+  宽度必须标 `width_unverified`
 
 **测试里有一些"原则守护"用例**，例如：
 ```python
@@ -322,8 +354,8 @@ for bad in ("安装目录", "图库", "搜索"):
 ### 已完成
 
 ```
-53 条指令 · 24 个 MCP 工具 · 50 passed / 74 subtests
-本地领先远端 1 个提交（F5）· 工作区 clean
+53 条指令 · 26 个 MCP 工具 · 66 passed / 74 subtests
+本地领先远端 2 个提交（F5、门窗宽度）· 工作区 clean
 ```
 
 ### 已完成并实测：F5（`build_plan` 内部的轴网标注）
@@ -353,11 +385,26 @@ for bad in ("安装目录", "图库", "搜索"):
 > 脚本里有个坑：直方图把类名归一成 `TDBAXISLABELSET`，直接找
 > `TCH_AXIS_LABEL` 会永远得到 0，必须走 `count_entities` 的别名匹配。
 
+### 已完成并实测：门窗宽度区分模板
+
+宽度读不出来（见 §5.1），所以走"登记 + 匹配"：`opening_library.register()` 记一次
+真实宽度（按图纸名分区持久化），`build_plan` 只在登记过的同宽度模板里选，选不到就
+返回 `stage: "missing_opening_width"` 并说清要建哪一樘——**不会静默用错宽度的模板**。
+新增 MCP 工具 `register_opening_template` / `list_opening_templates`。
+
+**实测证据**（2026-11-18，`Drawing31.dwg` 临时副本，4 个 `TDbOpening`）：
+
+```
+A. 声明 1000 宽 + 模板 4C4   -> TDbOpening 4 → 5，新句柄 5CA，成品包围盒 1000×975
+B. 要 1500 宽，模板只有 1000 -> 返回 missing_opening_width，TDbOpening 停在 5
+```
+
+复现：`& $py repro\opening_width_check.py <dwg副本路径>`（跑完关闭不保存）。
+
 ### 可以继续做的
 
-1. **门窗宽度区分模板** —— 现在所有门窗宽度都是模板的宽度
-2. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
-3. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
+1. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
+2. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
 
 ### 仓库
 
@@ -372,10 +419,10 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 
 ### 可以继续做的
 
-1. **F5：`build_plan` 内部的轴网标注** —— 现在会因为禁止嵌套 `_com` 而跳过
-2. **门窗宽度区分模板** —— 现在所有门窗宽度都是模板的宽度
-3. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
-4. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
+1. **PDF 导出** —— 需要装一个 `.pc3` 绘图仪配置
+2. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
+
+> F5（内部轴网标注）与门窗宽度区分模板都已完成并实测，见 §10。
 
 ### 测试图纸
 
@@ -384,11 +431,10 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 
 > 写这份文档时的实测状态（2026-11-18）：
 > ```
-> pytest            50 passed, 74 subtests          ✅
+> pytest            66 passed, 74 subtests          ✅
 > server import     OK                              ✅
-> CAD 连接          失败（AutoCAD 未运行，非代码问题）
+> CAD 连接          OK（AutoCAD 2022 + 天正 T20 正在运行）
 > ```
-> 也就是说：**代码是健康的，只是需要先启动 CAD**。
 
 ---
 
@@ -398,7 +444,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 # 1) 确认代码无损坏（不需要 CAD）
 cd C:\Users\19891\Desktop\插件创作\python
 & $py -m pytest tests -q
-# 期望：50 passed, 74 subtests passed
+# 期望：66 passed, 74 subtests passed
 
 # 2) 确认 MCP 服务可导入（不需要 CAD）
 & $py -c "import sys;sys.path.insert(0,'.');import t20_arch_mcp.server;print('OK')"

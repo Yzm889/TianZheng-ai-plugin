@@ -13,8 +13,63 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from . import template_clone, template_request, tianzheng_runner
-from .acad_conn import AcadError, _active_document, _com, allow_foreign_document, is_owned_document
+from . import opening_library, template_clone, template_request, tianzheng_runner
+from .acad_conn import (AcadError, _active_document, _com, allow_foreign_document,
+                        doc_name, is_owned_document)
+
+
+def _opening_kind(item: dict[str, Any]) -> str:
+    return opening_library.normalize_kind(item.get("type"))
+
+
+def _opening_width(item: dict[str, Any]) -> float | None:
+    raw = item.get("width")
+    if raw is None or str(raw).strip() == "":
+        return None
+    try:
+        width = float(raw)
+    except (TypeError, ValueError):
+        return None
+    return width if width > 0 else None
+
+
+def _opening_pools(spec: dict[str, Any], doc_key: str | None):
+    """整理可用门窗模板，返回 (pools, ask)。
+
+    ask 非空表示模板不够用，要把"请你建什么"的说明直接返回给用户。
+
+    模板来源优先级：
+      1) spec 显式给的 opening_templates（可带 width）
+      2) 本图已经登记过宽度的模板（register_opening_template）
+      3) 扫图得到的 TDbOpening，只接受几何上能确定宽度的
+    """
+    tpls = spec.get("opening_templates") or {}
+    if tpls:
+        return ({k: opening_library.as_candidates(tpls.get(k), doc_key)
+                 for k in ("door", "window")}, None)
+
+    registered = opening_library.entries(doc_key)
+    pools = {k: [{"handle": e["handle"], "width": e.get("width")}
+                 for e in registered
+                 if opening_library.normalize_kind(e.get("kind")) == k]
+             for k in ("door", "window")}
+    if pools["door"] or pools["window"]:
+        return pools, None
+
+    scan = template_clone._scan_impl()          # in-process, no _com
+    found = (scan.get("templates") or {}).get("TDBOPENING") or []
+    if not found:
+        return {}, template_request.missing_template_request(
+            "TDBOPENING", "插门窗需要一樘门或窗作为模板")
+
+    cands = []
+    for entry in found:
+        # 登记过就用登记值；否则只接受包围盒能判定出来的宽度（短边是墙厚的情况）
+        width = entry.get("declared_width")
+        if width is None:
+            width = entry.get("width_hint")
+        cands.append({"handle": entry["handle"], "width": width})
+    return {"door": cands, "window": cands}, None
 
 
 def _ensure_writable(doc: Any) -> None:
@@ -124,10 +179,17 @@ def build_plan(spec: dict[str, Any], timeout: float = 600.0) -> dict[str, Any]:
       "stage": "all" | "walls" | "openings" | "dimensions",
       "walls":         [{"x1","y1","x2","y2"}, ...],
       "wall_template": "句柄",            # 省略则自动扫第一面墙
-      "openings":      [{"type","x","y"}, ...],
-      "opening_templates": {"door": "句柄", "window": "句柄"},
+      "openings":      [{"type","x","y","width"?, "rotate"?}, ...],
+      "opening_templates": {"door": <句柄 | {handle,width} | [{handle,width}]>, "window": ...},
       "dimensions":    [{"kind": "linear"|"axis", "p1": [...], "p2": [...], "pos": [...]}, ...]
     }
+
+    门窗宽度：天正的门窗宽度是内部参数，克隆只能原样复制，所以"不同宽度需要
+    不同模板"。build_plan 的处理是：
+      · 给了 width -> 必须找到登记过相同宽度的模板，找不到就一次性把"要建
+        哪一樘、多宽、怎么登记"告诉你，不会默默用一个宽度不对的模板；
+      · 没给 width -> 用第一个模板，并在结果里标 width_unverified + 警告文案。
+    模板宽度的来源：spec 里写的、或 register_opening_template 登记过的。
 
     dimensions 的两种 kind：
       linear —— 逐点标注 TDimMP，p1/p2/pos 三个点。
@@ -208,37 +270,91 @@ def _build_impl(spec: dict[str, Any], timeout: float) -> dict[str, Any]:
     # ---------------- openings ----------------
     if stage in ("all", "openings") and spec.get("openings"):
         try:
-            tpls = spec.get("opening_templates") or {}
-            if not tpls:
-                scan = template_clone._scan_impl()          # in-process, no _com
-                op = (scan.get("templates") or {}).get("TDBOPENING") or []
-                if not op:
-                    return template_request.missing_template_request(
-                        "TDBOPENING", "插门窗需要一樘门或窗作为模板")
-                # a single template serves both when types are unknown
-                tpls = {"door": op[0]["handle"], "window": op[0]["handle"]}
-            made, errs = [], []
+            doc_key = doc_name(doc, None)
+            tol = float(spec.get("opening_width_tolerance",
+                                 opening_library.DEFAULT_TOLERANCE))
+            pools, ask = _opening_pools(spec, doc_key)
+            if ask:
+                result["ok"] = False
+                result["failed_stage"] = "openings"
+                result["partial_result"] = bool(result["completed_stages"])
+                result.update(ask)
+                return result
+
+            # 开工前预检：先确认每种宽度都有对应模板，缺什么一次性说清楚，
+            # 不要先克隆一半再半路卡住（用户明确要求过这一点）。
+            resolved: list[dict[str, Any]] = []
+            missing: list[dict[str, Any]] = []
+            prescan_errors: list[str] = []
             for idx, item in enumerate(spec["openings"]):
-                kind = str(item.get("type", "door")).lower()
-                h = tpls.get(kind) or tpls.get("door")
-                if not h:
-                    errs.append(f"opening {idx}: no template for {kind}")
+                kind = _opening_kind(item)
+                width = _opening_width(item)
+                cand, reason = opening_library.select(pools.get(kind) or [], kind,
+                                                      width, tol)
+                if cand is None and width is None and not pools.get(kind):
+                    # 没给宽度时保留旧行为：只有一个模板也能用（结果里会标未核实）。
+                    # 给了宽度就不跨类型借用模板，否则会做出"用门模板生成窗"的错件。
+                    cand, reason = opening_library.select(pools.get("door") or [],
+                                                          kind, width, tol)
+                if cand is None:
+                    if width is not None:
+                        # 要了宽度却没有任何能对上号的模板 -> 一律转成"请你建"，
+                        # 包括该类型模板一个都没有的情况。
+                        missing.append({"index": idx, "kind": kind, "width": width})
+                    else:
+                        prescan_errors.append(f"opening {idx}: 没有可用的{kind}模板")
                     continue
+                resolved.append({"index": idx, "item": item, "kind": kind,
+                                 "width": width, "candidate": cand, "reason": reason})
+
+            if missing:
+                first = missing[0]
+                ask = template_request.missing_opening_width(first["kind"],
+                                                             first["width"], doc_key)
+                ask["missing_widths"] = missing
+                result["failed_stage"] = "openings"
+                result["ok"] = False
+                result["partial_result"] = bool(result["completed_stages"])
+                result.update(ask)
+                return result
+
+            made, errs, width_plan = [], [], []
+            for plan in resolved:
+                item = plan["item"]
                 try:
                     r = template_clone._clone_impl(
-                        h, [{"x": float(item["x"]) + ox, "y": float(item["y"]) + oy}],
+                        plan["candidate"]["handle"],
+                        [{"x": float(item["x"]) + ox, "y": float(item["y"]) + oy}],
                         float(item.get("rotate", 0.0)),
                     )
                     made.extend(r.get("created", []))
                     errs.extend(r.get("errors", []))
+                    width_plan.append({
+                        "index": plan["index"],
+                        "kind": plan["kind"],
+                        "requested_width": plan["width"],
+                        "template": plan["candidate"]["handle"],
+                        "matched_width": plan["candidate"].get("width"),
+                        "status": ("matched" if plan["reason"] == "matched"
+                                   else "width_unverified"),
+                    })
                 except Exception as exc:  # noqa: BLE001
-                    errs.append(f"opening {idx}: {exc}")
+                    errs.append(f"opening {plan['index']}: {exc}")
+
             result["opening_count"] = len(made)
             result["opening_handles"] = [m["handle"] for m in made]
-            result["opening_errors"] = errs[:10]
+            result["opening_sizes"] = [m.get("size") for m in made]
+            result["opening_errors"] = (prescan_errors + errs)[:10]
+            result["opening_width_plan"] = width_plan
+            unverified = [w for w in width_plan if w["status"] == "width_unverified"]
+            if unverified:
+                result["width_warning"] = (
+                    "有 %d 个门窗没有给宽度、模板宽度也未登记，克隆出来的宽度等于模板宽度。"
+                    "要用指定宽度，请先 register_opening_template 登记模板宽度。" % len(unverified))
             result["completed_stages"].append("openings")
         except Exception as exc:  # noqa: BLE001
             return fail("openings", exc)
+
 
     # ---------------- dimensions ----------------
     if stage in ("all", "dimensions") and spec.get("dimensions"):

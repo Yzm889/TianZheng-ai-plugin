@@ -8,6 +8,24 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **门窗宽度区分模板（不需要猜宽度）** — 天正不暴露门窗宽度：`GetXData` 返回
+  `[null,null]`、没有 `Width`/`Rotation` 属性、`GetBoundingBox` 把宽度和高度混在
+  一起（实测 1000 宽的窗量出来是 `1000×975`，1800 宽的是 `1800×1755`）。
+  所以改成"登记 + 匹配"：
+  - 新模块 `opening_library.py`：`register_opening_template(handle, width, kind)`
+    登记真实宽度，按图纸名分区持久化（重启 MCP 服务仍在）；
+  - `build_plan` 的 `openings` 支持 `width`：命中登记宽度（±50 mm）才克隆，
+    不然返回 `stage: "missing_opening_width"`，说清楚要建哪一樘、多宽、怎么登记，
+    **一个都不会克隆**；
+  - 没给 `width` 时退回第一个模板，但结果里标 `width_unverified` + 警告；
+  - 新增工具 `register_opening_template` / `list_opening_templates`（共 26 个工具）。
+- 实测脚本 `repro/opening_width_check.py`。实测（`Drawing31.dwg` 副本）：
+  4 → 5（成品包围盒 `1000×975`）；要 1500 宽时拒绝动手，计数停在 5。
+- 8 条新单测 `tests/test_opening_library.py`、6 条
+  `tests/test_scene_build_openings.py`。
+
+### Added (F5)
+
 - **`build_plan` 现在能在内部做轴网标注（F5）** — `dimensions` 里 `kind: "axis"`
   不再被跳过，改为调用裸实现 `tianzheng_runner._annotate_axis_impl`
   （不经过 `_com`，所以不会在同一个 COM 工作线程上自锁）。
@@ -19,9 +37,9 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Verification status
 
-单元测试 `50 passed / 74 subtests`。
+单元测试 `66 passed / 74 subtests`。
 
-真实图纸实测通过（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线）：
+**轴网标注（F5）** 真实图纸实测通过（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线）：
 
 ```
 标注前  {"LINE": 8}
@@ -30,6 +48,15 @@ build_plan -> dimension_count 1 · axis_dote_lines 8 · axis_labels[0].counts 0 
 ```
 
 复现脚本 `repro/f5_axis_check.py`（`--inspect` 只看不发命令）。
+
+**门窗宽度区分模板** 真实图纸实测通过（2026-11-18，`Drawing31.dwg` 临时副本）：
+
+```
+A. 声明宽度 1000 + 模板 4C4(1000)  -> TDbOpening 4 -> 5，成品包围盒 1000x975
+B. 要 1500 宽，模板只有 1000       -> 拒绝动手，TDbOpening 停在 5，返回"请建 1500 的窗"
+```
+
+复现脚本 `repro/opening_width_check.py <dwg副本>`。
 
 ## [0.7.0] — 2026-11-17
 

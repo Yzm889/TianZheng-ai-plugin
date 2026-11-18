@@ -604,6 +604,20 @@ whose **midpoint** is the target (MID snap) and a `POINT` entity (NOD snap).
 Scaling a `TDbOpening` only affects its height; the width is an internal
 Tianzheng parameter. Different widths therefore need different MC templates.
 
+The width cannot be read back either: `GetXData("TCH"/"TDb"/...)` returns
+`[null, null]`, there is no `Width`/`Rotation` attribute, and `GetBoundingBox`
+mixes width with height -- measured on real objects, a 1000-wide window reports
+`1000 x 975`, a 1800-wide one `1800 x 1755`. So the plugin does **not** guess:
+
+* `register_opening_template(handle, width, kind)` records the real width once
+  (persisted per drawing, survives MCP restarts);
+* `build_plan` with `openings: [{..., width: 1500}]` only clones a template whose
+  recorded width matches within 50 mm, and otherwise returns
+  `stage: "missing_opening_width"` telling the user exactly which opening to
+  create -- it never silently clones a wrong-width opening;
+* with no `width` it falls back to the first template and flags
+  `width_unverified` plus a warning, so the result never pretends to be precise.
+
 ### 33. Nested `_com` calls deadlock the worker thread
 
 `build_plan` originally called `scan_templates()` / `clone_walls_batch()`, which
