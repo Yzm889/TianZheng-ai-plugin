@@ -355,7 +355,7 @@ for bad in ("安装目录", "图库", "搜索"):
 
 ```
 53 条指令 · 26 个 MCP 工具 · 66 passed / 74 subtests
-本地领先远端 2 个提交（F5、门窗宽度）· 工作区 clean
+本地领先远端 3 个提交（F5、门窗宽度、端到端回归）· 工作区 clean
 ```
 
 ### 已完成并实测：F5（`build_plan` 内部的轴网标注）
@@ -400,6 +400,25 @@ B. 要 1500 宽，模板只有 1000 -> 返回 missing_opening_width，TDbOpening
 ```
 
 复现：`& $py repro\opening_width_check.py <dwg副本路径>`（跑完关闭不保存）。
+
+### 已完成并实测：端到端串联回归
+
+之前 F5 与门窗宽度都只是**单项**实测，整链（walls → openings → dimensions）没跑过，
+"中途失败保留前序"只是单测假设。`repro/e2e_chain_check.py` 把它变成观测：
+
+```
+# 整链（Drawing31.dwg 副本：10 墙 / 4 门窗 / 8 条 DOTE 轴线）
+walls 10 -> 12 · openings 4 -> 6 · TDbDimension2 7 -> 12（+1 线性 +4 轴间）
+TDbAxisLabelSet 1 -> 2 · completed_stages ["walls","openings","dimensions"] · ok true
+
+# 中途失败（要 1500 宽，但只有 1000 模板）
+walls 10 -> 12（保留）· openings 停在 4 · dims 不变
+completed_stages ["walls"] · failed_stage "openings" · stage missing_opening_width
+```
+
+两个量测陷阱：直方图偶尔把某个 `LINE` 读成 `<unknown>`（总数不变），**不要**拿单个
+直方图 key 跨 run 比较，计数走 `count_entities()`；线性标注不增加 `TDbAxisLabelSet`，
+只有轴网标注会。
 
 ### 可以继续做的
 

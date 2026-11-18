@@ -631,6 +631,40 @@ this reason. They now run inside the builder by calling the bare
 actually has axis lines on layer `DOTE` — ZWBZ refuses any point that is not on
 a real axis.
 
+### 34. One `build_plan` call is verified end to end, not stage by stage
+
+Until 2026-11-18 every feature had only been measured in isolation: axis
+annotation on a grid drawing, opening widths on an opening drawing. The stages
+had never been run as one chain, so "the walls are kept when openings fail" was
+a unit-test assumption, not an observation.
+
+`repro/e2e_chain_check.py` closes that gap. On a copy of a real small plan
+(`Drawing31.dwg`: 10 walls, 4 openings, 8 `DOTE` axis lines) one call builds
+walls + doors/windows with an explicit width + a linear dimension + an axis
+annotation:
+
+```
+walls 10 -> 12 · openings 4 -> 6 · TDbDimension2 7 -> 12 (+1 linear, +4 axis)
+completed_stages ["walls", "openings", "dimensions"] · ok true
+```
+
+With `--fail-openings` (ask for 1500 while only a 1000 template exists) the
+callback keeps exactly what it should:
+
+```
+walls 10 -> 12 (kept) · openings 4 -> 4 · dims unchanged
+completed_stages ["walls"] · failed_stage "openings"
+stage "missing_opening_width" + the "please create a 1500 window" instructions
+```
+
+Two measurement traps worth remembering:
+
+* read entity counts with `count_entities()` — the histogram reports one `LINE`
+  as `<unknown>` on some runs (same total, different key), so never compare a
+  single histogram key across runs;
+* the axis annotation is the only dimension that adds `TDbAxisLabelSet`; linear
+  dimensions alone leave that at its old value, which is correct.
+
 ### 29. DXF export replaces PDF on installs without a plotter
 `PlotToFile` needs a `.pc3` device and this machine has none, so PDF output cannot be
 built. DXF goes through `SaveAs(path, 16)` -- no plotting stack involved -- so `导出DXF`

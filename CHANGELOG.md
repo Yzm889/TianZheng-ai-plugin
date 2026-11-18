@@ -23,6 +23,18 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   4 → 5（成品包围盒 `1000×975`）；要 1500 宽时拒绝动手，计数停在 5。
 - 8 条新单测 `tests/test_opening_library.py`、6 条
   `tests/test_scene_build_openings.py`。
+- **端到端串联回归** `repro/e2e_chain_check.py`：一次 `build_plan` 跑完
+  walls → openings（带宽度）→ dimensions（线性 + 轴网）。实测（`Drawing31.dwg`
+  副本，10 墙 / 4 门窗 / 8 条 DOTE 轴线）：
+  ```
+  walls 10 -> 12 · openings 4 -> 6 · TDbDimension2 7 -> 12（+1 线性 +4 轴间）
+  completed_stages ["walls","openings","dimensions"] · ok true
+  ```
+  `--fail-openings`（要 1500 宽但只有 1000 模板）：
+  ```
+  walls 10 -> 12（前序保留）· openings 停在 4 · dims 不变
+  completed_stages ["walls"] · stage missing_opening_width
+  ```
 
 ### Added (F5)
 
@@ -57,6 +69,15 @@ B. 要 1500 宽，模板只有 1000       -> 拒绝动手，TDbOpening 停在 5�
 ```
 
 复现脚本 `repro/opening_width_check.py <dwg副本>`。
+
+**端到端串联回归** 实测通过（2026-11-18，`Drawing31.dwg` 副本）：
+
+```
+walls 10 -> 12 · openings 4 -> 6 · TDbDimension2 7 -> 12 · TDbAxisLabelSet 1 -> 2
+中途失败时：walls 保留 +2，openings/dims 一个不动，completed_stages ["walls"]
+```
+
+复现脚本 `repro/e2e_chain_check.py <dwg副本>`（`--fail-openings` 验部分保留）。
 
 ## [0.7.0] — 2026-11-17
 
