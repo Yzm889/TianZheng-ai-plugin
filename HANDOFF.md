@@ -698,6 +698,33 @@ Test-NetConnection ssh.github.com 443  → True    ← 唯一通的路径
 
 ---
 
+## 14. 宿主侧闭环验证（2026-11-18，不用装 DSH 也能验）
+
+结论先写：**从 MCP 协议到天正 COM 整条链已验证通过**，用的就是 DSH 的启动方式。
+
+**验法**：用 `mcp` SDK 起 stdio 客户端当宿主（跟 DSH 的 MCP client 同一条路），
+两条都跑了：
+
+1. 直启：`python -m t20_arch_mcp.server`（cwd=`python\`，`PYTHONPATH` 指过去，
+   env 里**删掉** `T20_HOST_GUI`，模拟纯文本宿主）。
+2. 走安装链：`powershell.exe -NoProfile -ExecutionPolicy Bypass -Command
+   '& (Join-Path $env:LOCALAPPDATA "dsh-t20-arch\bin\run.ps1")'`，也就是
+   `cordis.patch.yml` 里那条 MCP 行的原样。
+
+**两条都返回**：`TOOLS 30`、`handoff_to_gui_host` 在列、`gui_*` 为空
+（`host_gui=false`，符合纯文本宿主预期）、`user_steps_zh` 301 字、
+`handoff_to_gui_host({"pending":[{"kind":"hatch_area"}]})` 返回真图数据
+（`DOC GUI功能验收样式图.dwg`、句柄 `2E0`、插入点 `-700,-2200`）。
+
+**顺手抓到的安装阻断**（已修，见 `lib/index.js::copyTree`）：`fs.cpSync` 递归复制
+在本机是 `0xC0000409` 直接杀 node，单个文件复制却正常。改成手写递归后 `apply()` 一次过。
+如果哪天又看到 staging 里只有空 `bin`/`python`，先看 `plugin.log` 有没有 `apply done`。
+
+**注意**：`%LOCALAPPDATA%\dsh-t20-arch` 里现在只有 `venv` 是 11-16 留下的，`bin`/`python`
+是这次重新 stage 的。DSH 若真要加载，重新触发一次插件加载即可（不必重装 npm 包）。
+
+---
+
 ## 附：关键常量
 
 ```python

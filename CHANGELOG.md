@@ -40,6 +40,11 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Fixed
 
+- **安装步骤会让 node 直接崩溃**：`lib/index.js` 的 `fs.cpSync(bin|python, root, {recursive:true})`
+  在 Windows 11 + node 22 上退出码 `0xC0000409`（STATUS_STACK_BUFFER_OVERRUN），
+  staging 只留下空目录、MCP 起不来。改成手写递归 `copyTree`（逐文件 `copyFileSync`）
+  后一次通过。2026-11-18 实测：`apply()` 返回后 `bin` 2 个文件、`python` 68 个文件，
+  `plugin.log` 有 `apply done`。
 - 直径标注 `TDimDia` **只认弧不认圆**：点整圆会问"是否为该对象[Y/N]"、答 Y 后回
   "请选择弧线!"；改画 `AddArc`（20°–160°，挑 45° 圆周点）即可产出标注。
 - `AddArc` 的圆心必须用 `VARIANT(VT_ARRAY|VT_R8)` 包装（直接传 tuple 报 -2147024809）。
