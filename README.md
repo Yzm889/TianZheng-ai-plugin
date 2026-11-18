@@ -183,6 +183,106 @@ dialogs and pick entities on screen instead of asking the user to do it by hand.
 That is also why `capability_report` tells a GUI-less host, in so many words, to
 consider driving this plugin from an AI tool with GUI control.
 
+### 给 DSH 用户的提示语（初次使用 / 想更顺手时）
+
+插件里这几条命令**必须在图形里用鼠标点中对象**，纯文本宿主点不动：
+半径标注 `TDimRad`、直径标注 `TDimDia`、面积统计 `TCountArea`、填充面积
+`THatchArea`、文字加框 `TTextAddFrame`、车位编号 `TParkingNumber`、
+房间排序 `TSortSpace`、墙体分段 `TPartwall`、单轴标注 `TSingleAxisDim`。
+
+所以本插件对宿主 AI 有一条固定话术（`capability_report` 返回的 `user_hint_zh`，
+纯文本宿主跑选择类命令时也会随结果一起带回）。宿主应在**第一次会话**、以及
+**第一次遇到选择类命令点不动**时，把这句话转述给用户，之后不要反复重复：
+
+> 温馨提示：这个插件有几类命令（半径/直径标注、面积统计、填充面积、文字加框、
+> 车位编号、房间排序、墙体分段、单轴标注）必须先在图里用鼠标点中对象，纯文本/
+> 终端型 AI 点不了，会停在“选择对象”。如果你想要更顺手的操作、并用上这些功能，
+> 建议改用**具备桌面 GUI 控制能力的 AI 工具**（例如豆包 PC 客户端）来驱动本插件：
+> 它能截图定位、自己算屏幕坐标、真的把鼠标点下去，功能更全、体验更顺。
+
+用户追问“那我具体该怎么操作”时，把下面这段（`user_steps_zh`）原样给他：
+
+> 具体操作分三步，不用重画：
+> 1. 先在当前环境里把能做的做完：轴网、墙体、房间、门窗、图框、表格、导出、查询
+>    这些都不需要鼠标，直接用就行。
+> 2. 做到要点选的那几类命令（半径/直径标注、面积统计、填充面积、文字加框、
+>    房间排序、墙体分段、单轴标注、车位编号）之前，先把这张图存盘（save_drawing），
+>    然后停手。
+> 3. 打开豆包 PC 客户端（或任何能自己截屏、点鼠标的 AI 工具），把这张 dwg 的完整
+>    路径发给它，说“接着把剩下的标注/统计补上”。它在同一个 CAD 里点完，你把结果
+>    拿回来继续做后面的命令行部分。
+> 注意：同一张图不要让两个 AI 同时操作，会互相抢 CAD 的焦点和命令行。
+
+判断一个宿主到底能不能干这些活，只看两件事（账户是谁无关）：它有没有截图 / 点击 /
+按键这类工具；`capability_report` 里的 `host_gui` 是不是 `true`。
+
+### 交接清单：`handoff_to_gui_host`
+
+纯文本宿主（DeepSeek/DSH）做完轴网、墙体、房间这些之后，**停手前调一次**
+`handoff_to_gui_host`，插件会算好一份可以直接照单执行的清单：
+
+```json
+{"pending": [
+  {"kind": "radius_dim"},
+  {"kind": "面积统计", "handles": ["2D2"]},
+  {"kind": "hatch_area", "points": [[6300, -2200]]}
+]}
+```
+
+`kind` 支持 `radius_dim / diameter_dim / area_stat / hatch_area / text_frame /
+room_sort / wall_split / axis_label / parking_number`，中文写法（半径、面积、填充、
+加框、分段、单轴、车位）也认。除了 `kind` 别的都可以不给。
+
+返回里最有用的是 `handoff_text`，长这样：
+
+```
+# 交接清单（给带 GUI 的 AI 执行）
+
+图：C:\tmp\样图.dwg
+现有实体：TDbWall 2 / TDbSpace 1 / AcDbCircle 1 / AcDbArc 1 / ...
+
+已完成（插件按类型判定，仅供参考）：
+- 天正表格（面积统计 / 填充面积）：1 个（TDbSheet）
+
+待办（照单执行，别动其他实体）：
+1. 半径标注　命令 TDimRad
+   目标句柄：1D、1E
+   点选对象用这些点：10136.4,6236.4｜12995,6445
+   尺寸线位置：11300,5600
+   预期实体增量：1
+...
+```
+
+几处细节：
+
+- **点选点一定落在对象上**：圆/弧取 45° 圆周点，线取中点，其余取中心——不是包围盒
+  正中那种"看着像、点不到"的坐标。
+- **命令要的点位也给了**：尺寸线位置、表格插入点（放图形右侧留白，多张表自动往下
+  错开 3400）、墙体分段的两个基线点。
+- **目标句柄按类型自动挑**，也能自己指定；图里根本没有这类对象时，`note` 会直接说
+  "先在纯文本侧把这些画出来"。
+- **已完成是类型级判断**（有 `TDbSheet` 就认为已有统计表、有 `TDbRadiusDim` 就认为
+  已有半径标注），`already_looks_done` 只做提醒，不替你下结论。
+- `out_path` 给了就顺手把清单写成 `.md`（例如 `docs\交接清单.md`），方便直接贴给
+  下一个 AI。
+- 这个工具**只读图、不画东西**，所以纯文本宿主也能用，不需要 `T20_HOST_GUI=1`。
+
+### 这 8 类功能的验收样图
+
+`docs\GUI功能验收样式图.dwg`（源图）+ `docs\GUI功能验收样式图.png`（成图截图）
+是 `repro\gui_style_drawing.py` 跑出来的样板：轴网、墙体、房间、房间排序、
+面积统计表、圆+半径标注、弧+直径标注、填充+填充面积表、文字加框、单轴标注、
+墙体分段，一条命令一次点击，跑完 11/11 通过（脚本自己核对实体增量）。
+
+```powershell
+python repro\gui_style_drawing.py            # 建图 + 截图 + 导 PDF
+python repro\gui_style_drawing.py --no-pdf   # 只建图 + 截图
+```
+
+注意：PDF 导出走的是 AutoCAD 核心打印，**天正自定义对象（TDbWall/TDbSpace/
+TDbSheet/TDb*Dim）不会出现在 PDF 里**（轴网、圆、填充、原生文字会）。要出正式
+图纸，请在 CAD 里用天正自带的打印/输出，或者先 `TExplode` 分解再打。
+
 ## Install
 
 Installed from the Git commit (this package is distributed via Git, not npm):

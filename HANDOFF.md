@@ -506,6 +506,50 @@ B. TDimRad -> 模型空间 56 -> 57，新增 CIRCLE 1 + TDBRADIUSDIM 1
 
 1. **立面/剖面** —— 需要先解决「工程管理」建工程的问题
 
+### 2026-11-18 晚：GUI 档 8 类命令全部跑通 + 验收样图
+
+`repro\gui_style_drawing.py` 一条脚本建出样板图，**11/11 通过**（自己核对实体增量）：
+
+```
+[1] 轴网 HZZW            PASS  8 条 DOTE 线
+[2] 墙体 HZQT            PASS  0 -> 4 面 TDbWall
+[3] 房间 TUpdSpace       PASS  0 -> 1 个 TDbSpace（22.40 m²）
+[4] 房间排序 TSortSpace  PASS  命令跑完（不新增实体）
+[5] 面积统计 TCountArea  PASS  +1 TDbSheet（1001/房间/22.40）
+[6] 半径标注 TDimRad     PASS  +1（点圆周 45° 点，不补回车）
+[7] 直径标注 TDimDia     PASS  +1（必须给 ARC，整圆会被拒）
+[8] 填充面积 THatchArea  PASS  +1 TDbSheet（ANSI31/5.40）
+[9] 文字加框 TTextAddFrame PASS +1
+[10] 单轴标注 TSingleAxisDim PASS +1 TDbAxisLabelSet
+[11] 墙体分段 TPartwall  PASS  命令跑完（分段不新增实体）
+```
+
+成图：`docs\GUI功能验收样式图.png` / `.dwg`。
+
+**本轮新增的可用能力（`gui_drive`）**
+- `zoom_window=[[x1,y1],[x2,y2]]`：直接给世界窗口。用来把"还没有实体的插入点"
+  （表格插入点、标注位置）也框进视野——否则那个点击会落到命令行上，表现为
+  "命令跑完了但没产出"。
+- `confirm_enter=False`：尺寸类命令点选后**不要**补回车，补了会被当"退出"。
+
+**缩放口径（用户反复强调过，别再改）**：ZOOM Extents + 留白 15%（`zoom_fill=0.85`），
+对象只占画布 15–25%。不要把对象放到贴满界面——边框和界面重合就没法窗选了。
+
+**本轮修掉的三个真凶**
+1. `gui_select._count_impl` 里那句 `tianzheng_query.count_entities(kind)`：`TCH_WALL`
+   一次卡 25 s 并把 COM 线程堵死，后面 `SaveAs`/计数全超时。已改成本地遍历
+   `ObjectName`（并做 `TCH_WALL→TDbWall` 别名）。
+2. `SaveAs` 报「保存文档时出错」(-2145320861) = **目标 dwg 被另一个已打开的文档占着**。
+   解法：每次跑用唯一工作文件名（`gui_style_work_<HHMMSS>.dwg`），建图后**立刻先存一次**
+   （且这一步不要先按 ESC），末了 `doc.Save()` 再复制成交付名。
+3. `export_pdf` 出来的 PDF **缺所有天正对象**（TDbWall/TDbSpace/TDbSheet/TDb*Dim），
+   轴网/圆/填充/原生文字正常；`PROXYGRAPHICS=1` 也无效。正式出图要用天正自带打印
+   或先分解。这条写进 CHANGELOG 的 Known limits。
+
+**给 DSH 用户的提示已落地**：`server.py` 里的 `GUI_HINT_ZH`，由
+`capability_report.user_hint_zh` 返回；`run_tianzheng_command` 跑到选择类命令且
+实体没动时也随结果带回。话术要求：初次会话说一次、第一次点不动再说一次，别每轮重复。
+
 ### 仓库
 
 ```
@@ -544,7 +588,7 @@ https://github.com/Yzm889/TianZheng-ai-plugin
 # 1) 确认代码无损坏（不需要 CAD）
 cd C:\Users\19891\Desktop\插件创作\python
 & $py -m pytest tests -q
-# 期望：74 passed, 74 subtests passed
+# 期望：101 passed, 74 subtests passed
 
 # 2) 确认 MCP 服务可导入（不需要 CAD）
 & $py -c "import sys;sys.path.insert(0,'.');import t20_arch_mcp.server;print('OK')"
@@ -562,6 +606,53 @@ cd C:\Users\19891\Desktop\插件创作\python
 #    README.md                —— 完整能力清单 + 29 条硬核细节
 #    docs/插入门窗指南.md      —— 门窗必须人工点选的原因与操作
 ```
+
+---
+
+## 12. 交接清单：纯文本宿主怎么把活交出去（2026-11-18 新增）
+
+这是本轮最后加的一块，解决"DeepSeek 做不了点选，用户又不知道该怎么接"的断点。
+
+**工具**：`handoff_to_gui_host(pending, out_path=None)`，只读图、不画东西，
+**不要求 `T20_HOST_GUI=1`**，所以纯文本宿主也能调。
+
+```python
+handoff_to_gui_host(pending=[
+    {"kind": "radius_dim"},
+    {"kind": "面积统计"},          # 中文也认
+    {"kind": "wall_split", "handles": ["1A"]},   # 想指定就指定
+], out_path=r"docs\交接清单.md")
+```
+
+`pending` 里最省事的写法只给 `kind`，其余全自动：挑目标句柄、算点选点、算命令要的
+点位。9 类 kind 与天正命令的对应写在 `handoff.py` 的 `KIND_SPEC`。
+
+**返回的关键字段**
+
+| 字段 | 含义 |
+| --- | --- |
+| `handoff_text` | 可直接贴给下一个 AI 的中文清单（路径/已有实体/待办编号/护栏） |
+| `pending[].handles` | 自动挑好的目标句柄（圆/弧/房间/填充/文字/墙/DOTE 线） |
+| `pending[].pick_points` | 一定点得中的点：圆/弧 45° 圆周、线中点、其余中心 |
+| `pending[].points` | 命令自己要的点位：尺寸线位置 / 表格插入点 / 墙体基线点 |
+| `pending[].already_looks_done` | 图上似乎已有产出（类型级判断，只提醒不下结论） |
+| `pending[].note` | 图里找不到源对象、或该命令根本没跑通时的说明 |
+| `written_to` | 传了 `out_path` 才有的落盘路径 |
+
+**接手方（带 GUI 的 AI）拿到清单后干什么**：逐条跑 `gui_select_command`，
+`handles` 和 `labels/points` 直接用清单里的值，跑完用 `capability_report` 之外的
+实体增量核对（清单里写了每项 `expect_delta`）。
+
+**踩过的两个坑**
+
+1. 中文别名模糊匹配如果按字典顺序命中，`填充面积` 会被更短的 `面积` 抢走 →
+   改成"取最长别名"（`_resolve_kind`）。
+2. 清单里点位直接打 float 会出现 `1933.3333333` 这种读不下去的数字 →
+   统一走 `_fmt()`（1 位小数，整数值不带 `.0`）。
+
+**测试**：`python\tests\test_handoff.py` 18 例，全量 `101 passed, 74 subtests`。
+**已知未做**：没在真实 CAD 上端到端跑过（当时 CAD 已关闭）；`FINISHED_RULES` 里
+直径标注用的是 `DIADIM` 关键字，实际类名待 CAD 起来后按 `type_counts` 校正。
 
 ---
 

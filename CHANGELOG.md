@@ -8,6 +8,47 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **GUI 档跑通 8 类「必须点鼠标」的天正命令，并出了验收样式图**（2026-11-18）
+  - `gui_drive.run_prompt_driven` 新增 `zoom_window`（给世界窗口，把"还没有实体的
+    插入点"一起框进视野）、`confirm_enter`（尺寸类命令点完不许补回车，补了会被当"退出"）。
+  - 缩放口径统一为 **ZOOM Extents + 留白 15%**（对象只占画布约 15–25%），不再把对象
+    顶到界面边界——那样没法窗选边框，也和命令行区域重叠。
+  - 修掉两个会拖死后续调用的问题：① `gui_select._count_impl` 不再走
+    `tianzheng_query.count_entities`（在 `TCH_WALL` 上会卡 25 s 并把 COM 线程堵死），
+    改为自己遍历 `ObjectName`；② `counts()` 加类型别名 `TCH_WALL→TDbWall` 等。
+  - 存盘：新建图后**先 `SaveAs` 到唯一文件名**再干活（同名 dwg 被别的文档占着时
+    `SaveAs` 恒报「保存文档时出错」-2145320861）；末了 `doc.Save()` + 复制成交付名。
+  - 新增 `repro/gui_style_drawing.py`：一份脚本把 11 步（轴网→墙体→房间→房间排序→
+    面积统计→圆+半径→弧+直径→填充+填充面积→文字加框→单轴标注→墙体分段）全跑一遍，
+    自己核对实体增量，**11/11 通过**；成图 `docs/GUI功能验收样式图.png` / `.dwg`。
+- **给 DSH 用户的 GUI 提示落地**：`capability_report` 返回固定话术 `user_hint_zh`
+  （初次会话说一次、第一次遇到选择类命令点不动再说一次，不要每轮重复），以及
+  分步操作说明 `user_steps_zh`（用户追问“那我该怎么操作”时原样照抄）：
+  先做不需要鼠标的部分 → 存盘 → 交给带 GUI 的 AI 工具点选 → 回来继续。
+  `run_tianzheng_command` 跑到选择类命令且实体没动时，两句都随结果带回。
+  注意：接入谁的账户不改变能力，只看宿主有没有截图/点击工具（`host_gui`）。
+- **新增工具 `handoff_to_gui_host(pending, out_path)`**：只读的交接清单生成器，纯文本
+  宿主停手前调一次就能拿到「路径 + 已有实体 + 还差什么 + 目标句柄 + 点得中的点选点 +
+  命令要的尺寸线位置/表格插入点/基线点 + 预期实体增量」的 `handoff_text`（可直接贴给
+  带 GUI 的 AI）。`kind` 收 9 类命令，中英文写法都认；`out_path` 可落成 .md。
+  算法在 `handoff.py` 的 `build_handoff()`（纯函数），COM 采集在 `collect_document()`。
+  测试 `tests/test_handoff.py`（18 例：kind 解析取最长别名、句柄按类型挑、圆周点位、
+  横墙基线点、两表错行、已完成判定、不支持项说明、文案带护栏）。
+
+### Fixed
+
+- 直径标注 `TDimDia` **只认弧不认圆**：点整圆会问"是否为该对象[Y/N]"、答 Y 后回
+  "请选择弧线!"；改画 `AddArc`（20°–160°，挑 45° 圆周点）即可产出标注。
+- `AddArc` 的圆心必须用 `VARIANT(VT_ARRAY|VT_R8)` 包装（直接传 tuple 报 -2147024809）。
+
+### Known limits
+
+- `export_pdf` 走 AutoCAD 核心打印，**天正自定义对象（TDbWall/TDbSpace/TDbSheet/
+  TDb*Dim）不会出现在 PDF 里**（轴网、圆、填充、原生文字正常）。`PROXYGRAPHICS=1`
+  也无效。正式出图请用天正自带打印，或先分解（`TExplode`）再打。
+- 车位编号 `TParkingNumber` 仍未跑通：`TParkingSpace` 单点/两点都只回"*取消*"，
+  没有车位对象可编号；样张里因此不含车位。
+
 - **GUI 层：需要真实鼠标点选的命令（`gui_select`）** — 一类命令以「选择对象」开头，
   COM 无法替它完成点选（`SelectOnScreen` 也是交互式的），过去只能返回"请你手点"。
   现在把它变成：句柄 → 屏幕坐标 → 真点一下 → 回车 →（可选）点定位点 → 核对实体增量。
