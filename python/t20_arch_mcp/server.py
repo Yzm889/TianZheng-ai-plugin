@@ -12,12 +12,42 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import (acad_conn, env_check, gui_select, native_tools, nl_dispatch,
-               opening_library, plot_export, scene_build, template_clone,
-               tianzheng_query, tianzheng_runner)
+from . import (acad_conn, env_check, gui_select, handoff, native_tools,
+               nl_dispatch, opening_library, plot_export, scene_build,
+               template_clone, tianzheng_query, tianzheng_runner)
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
+
+# 这些天正命令必须先"在图形里选对象/点位置"，纯 COM 走不完，属于 GUI 档。
+GUI_SELECT_COMMANDS = (
+    "TDIMRAD", "TDIMDIA", "TCOUNTAREA", "THATCHAREA", "TTEXTADDFRAME",
+    "TPARKINGNUMBER", "TSORTSPACE", "TPARTWALL", "TSINGLEAXISDIM",
+)
+
+# 给使用本插件的 AI（DeepSeek 等纯文本/终端宿主）的固定提示语：
+# 初次使用、或者遇到选择类命令点不动时，照这句回复用户即可（短，一句）。
+GUI_HINT_ZH = (
+    "温馨提示：这个插件有几类命令（半径/直径标注、面积统计、填充面积、文字加框、"
+    "车位编号、房间排序、墙体分段、单轴标注）必须先在图里用鼠标点中对象，纯文本/"
+    "终端型 AI 点不了，会停在“选择对象”。如果你想要更顺手的操作、并用上这些功能，"
+    "建议改用**具备桌面 GUI 控制能力的 AI 工具**（例如豆包 PC 客户端）来驱动本插件："
+    "它能截图定位、自己算屏幕坐标、真的把鼠标点下去，功能更全、体验更顺。"
+)
+
+# 用户追问“那我到底该怎么做”时给的分步说明（可直接照抄转述）。
+GUI_STEPS_ZH = (
+    "具体操作分三步，不用重画：\n"
+    "1. 先在当前环境里把能做的做完：轴网、墙体、房间、门窗、图框、表格、导出、查询"
+    "这些都不需要鼠标，直接用就行。\n"
+    "2. 做到要点选的那几类命令（半径/直径标注、面积统计、填充面积、文字加框、"
+    "房间排序、墙体分段、单轴标注、车位编号）之前，先把这张图存盘（save_drawing），"
+    "然后停手。\n"
+    "3. 打开豆包 PC 客户端（或任何能自己截屏、点鼠标的 AI 工具），把这张 dwg 的完整"
+    "路径发给它，说“接着把剩下的标注/统计补上”。它在同一个 CAD 里点完，你把结果"
+    "拿回来继续做后面的命令行部分。\n"
+    "注意：同一张图不要让两个 AI 同时操作，会互相抢 CAD 的焦点和命令行。"
+)
 
 INSTRUCTIONS = """
 Bridge to a running AutoCAD instance with T20-Arch (Tianzheng Architecture) loaded.
@@ -54,6 +84,19 @@ GUI tier (optional):
     that driving this plugin from an AI tool with GUI/desktop control (for
     example the Doubao desktop app) is more comfortable and unlocks those
     commands. Never pretend the pointer work can be done without a GUI.
+  * capability_report returns `user_hint_zh` -- a ready-to-say sentence. Reply
+    with it (verbatim or lightly adapted) on the FIRST session, and again the
+    first time a select-type command does not move. Do not nag every turn.
+  * If the user asks "then how do I actually do it?", hand them `user_steps_zh`
+    verbatim: do the COM-friendly part here, save the drawing, then hand the
+    dwg to a GUI-capable AI tool (Doubao PC client) to finish the click work,
+    and never let both operate the same drawing at the same time.
+  * Before you stop on a drawing that still needs click-only commands, call
+    handoff_to_gui_host(pending=[{"kind": ...}]) and pass the returned
+    handoff_text to the user. It is read-only and works without T20_HOST_GUI.
+    It fills in the target handles, a pick point that really hits each object,
+    and the points each command will ask for, so the next host does not have to
+    guess. For a plain-text workflow this is the correct way to finish a drawing.
 """.strip()
 
 mcp = MCPServer(name=SERVER_NAME, instructions=INSTRUCTIONS)
@@ -245,9 +288,26 @@ def run_tianzheng_command(
             mode=mode,
             auto_dismiss_ui=auto_dismiss_ui,
         )
-        return _dump({"ok": True, **result})
+        payload = {"ok": True, **result}
+        # 选择类命令在纯文本宿主里跑不动：把这句固定提示带回去，让宿主转述给用户。
+        if command.strip().upper() in GUI_SELECT_COMMANDS:
+            deltas = result.get("type_deltas") or {}
+            moved = any(int(v or 0) > 0 for v in deltas.values())
+            if not moved or not gui_select.gui_enabled():
+                payload.setdefault("user_hint_zh", GUI_HINT_ZH)
+                payload.setdefault("user_steps_zh", GUI_STEPS_ZH)
+                payload.setdefault(
+                    "hint_reason",
+                    "纯文本宿主无法在图形里选择对象，这条命令需要真实鼠标点选。"
+                )
+        return _dump(payload)
     except Exception as exc:  # noqa: BLE001
-        return _dump({"ok": False, "error": str(exc), "error_type": type(exc).__name__, "command": command})
+        payload = {"ok": False, "error": str(exc), "error_type": type(exc).__name__,
+                   "command": command}
+        if command.strip().upper() in GUI_SELECT_COMMANDS:
+            payload["user_hint_zh"] = GUI_HINT_ZH
+            payload["user_steps_zh"] = GUI_STEPS_ZH
+        return _dump(payload)
 
 
 @mcp.tool(
@@ -531,20 +591,55 @@ def capability_report() -> str:
             "房间排序 TSortSpace（要先选中房间）",
             "墙体分段 TPartwall（要先精确点在墙体基线上）",
         ],
-        "note_when_missing": (
-            "这类命令要先在图形里“选择对象”，纯终端/MCP 的工作方式点不了鼠标。"
-            "如果你想要更顺的操作、并且用到这些功能，建议用**具备图形界面控制能力的 "
-            "AI 工具**（比如豆包 PC 客户端）来驱动这个插件：它能截图看画面、算屏幕坐标、"
-            "真的把鼠标点下去，所以选择类命令、天正自绘对话框都能走通。"
-        ),
+        "note_when_missing": GUI_HINT_ZH,
+        "user_hint_zh": GUI_HINT_ZH,
+        "user_steps_zh": GUI_STEPS_ZH,
+        "when_to_say_it": [
+            "会话第一次开图、准备画图时，主动说一次（这是'初次使用提示'）",
+            "某条选择类命令恰好停在'选择对象'、点不动时，再说一次",
+            "用户追问'那我具体该怎么操作'时，把 user_steps_zh 原样给他",
+            "不要每轮都重复；用户明确表示不方便换工具时也不用再说",
+        ],
         "note_when_present": (
             "当前宿主已开启桌面控制，选择类命令可用。仍建议先 ZOOM 全图，让目标都落在"
             "视图内再点；点完会用实体增量核对结果。"
         ),
     }
     if not gui_select.gui_enabled():
-        payload["message"] = payload["note_when_missing"]
+        payload["message"] = GUI_HINT_ZH
     return _dump(payload)
+
+
+@mcp.tool(
+    name="handoff_to_gui_host",
+    description=(
+        "READ-ONLY on the drawing: build a hand-off checklist for a GUI-capable host. "
+        "Call it right before you stop working on a drawing that still needs click-only "
+        "commands (radius/diameter dims, area statistics, hatch area, text frames, room "
+        "sorting, wall splitting, single-axis labels, parking numbers). It returns the "
+        "dwg path, what already exists, and for each pending item the exact Tianzheng "
+        "command, target handles, a pick point that really hits the object, and the "
+        "points the command will ask for (dimension-line position / table insertion / "
+        "wall baseline points). handoff_text is a ready-to-paste Chinese brief.\n"
+        "pending = [{\"kind\": \"radius_dim\"|\"diameter_dim\"|\"area_stat\"|\"hatch_area\"|"
+        "\"text_frame\"|\"room_sort\"|\"wall_split\"|\"axis_label\"|\"parking_number\", "
+        "\"note\"?: str, \"handles\"?: [str], \"points\"?: [[x,y]]}]. "
+        "Chinese kinds such as 半径/面积/填充/加框/分段 are also accepted."
+    ),
+)
+def handoff_to_gui_host(pending: list[dict[str, Any]] | None = None,
+                        out_path: str | None = None) -> str:
+    try:
+        result = handoff.handoff(list(pending or []))
+        if out_path:
+            path = os.path.abspath(os.path.expanduser(out_path))
+            os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+            with open(path, "w", encoding="utf-8") as fh:
+                fh.write(result["handoff_text"] + "\n")
+            result["written_to"] = path
+        return _dump(result)
+    except Exception as exc:  # noqa: BLE001
+        return _dump({"ok": False, "error": str(exc), "error_type": type(exc).__name__})
 
 
 if gui_select.gui_enabled():
