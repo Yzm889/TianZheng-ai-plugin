@@ -328,6 +328,8 @@ B. TDimRad: 点圆 5D0 -> 回车接受"是否为该对象[Y]" -> 点 4100,4050
 | 13 | 杀毒软件会静默杀掉天正 | 检查 `uxtheme.dll` 是否被隔离 |
 | 14 | `DataStore.dbf` 只读会中断命令 | `attrib -R` 后重启 CAD |
 | 15 | 提权不一致导致 COM 失败 `0x80070522` | DSH 和 CAD 必须同权限级别 |
+| 16 | `github.com:443` 被重置导致 `dshpub` 装不上 | `git config --global url."git@github.com:".insteadOf "https://github.com/"` |
+| 17 | `dshpub` 报 `spawn dsh ENOENT` | 桌面版 `dsh` 不在 PATH；改用桌面版插件管理器安装 |
 | 16 | 直方图的 key 是**归一后**的类名（`TDBAXISLABELSET`），拿 `TCH_AXIS_LABEL` 去查永远得 0 | 计数一律走 `count_entities()`（带别名匹配），直方图只用来读原始类名 |
 | 17 | 门窗宽度**读不出来**（XData 空、无 Width 属性、包围盒混高度），`ScaleEntity` 只改高度 | 用 `register_opening_template` 登记宽度，`build_plan` 按登记值匹配；读不到就报错，不许猜 |
 | 18 | `PlotToFile` 返回 ≠ 文件写好（异步，约 20 s），`IAcadPlot` 也没有 `PlotConfigurations` | 绘图仪设在 `ActiveLayout.ConfigName`（默认「无」= 静默失败）；套 `monochrome.ctb`；轮询到大小稳定才算成功 |

@@ -287,22 +287,76 @@ TDbSheet/TDb*Dim）不会出现在 PDF 里**（轴网、圆、填充、原生文
 
 ## Install
 
-Installed from the Git commit (this package is distributed via Git, not npm):
+This package is distributed via Git, not npm.
+
+### Option A — DSH Desktop plugin manager (recommended)
+
+**Settings → Plugins → Install**, then paste:
+
+```
+Yzm889/TianZheng-ai-plugin
+```
+
+### Option B — `dshpub` CLI
 
 ```bash
 npx dshpub add Yzm889/TianZheng-ai-plugin --ref <40-char-commit>
 ```
 
-Or from a local clone:
+`--ref` pins an exact commit; omit it to track `main`.
+
+> **`dshpub` needs a `dsh` executable on `PATH`.** It shells out to
+> `dsh plugin add <spec>` at the end, and the desktop build does **not** put `dsh`
+> on `PATH`. If you see `spawn dsh ENOENT`, use Option A instead — the clone and
+> validation already succeeded at that point, only the registration step failed.
+
+### Option C — from a local clone
 
 ```bash
-dsh plugin add ./
+git clone https://github.com/Yzm889/TianZheng-ai-plugin
+dsh plugin add ./TianZheng-ai-plugin
 ```
 
 Then **fully quit and reopen DSH**. Tools appear as `mcp__t20_arch__*`.
 
 The launcher finds a Python that already has `pywin32` and `mcp`, or builds a private
 venv under `%LOCALAPPDATA%\dsh-t20-arch` on first use.
+
+### If `github.com:443` is unreachable
+
+In some networks (commonly mainland China) plain HTTPS to `github.com` is reset while
+`ssh.github.com:443` stays reachable. `dshpub` clones over HTTPS, so it fails with:
+
+```
+fatal: unable to access 'https://github.com/...': Failed to connect to github.com:443
+```
+
+Check the two paths separately — they really do differ:
+
+```powershell
+Test-NetConnection github.com      -Port 443   # often False
+Test-NetConnection ssh.github.com  -Port 443   # often True
+```
+
+Route HTTPS GitHub URLs over SSH instead:
+
+```bash
+git config --global url."git@github.com:".insteadOf "https://github.com/"
+```
+
+This rewrites every `https://github.com/...` clone to `git@github.com:...`. It requires
+your SSH key to be authorized on GitHub (`ssh -T git@github.com` should greet you).
+Add this to `~/.ssh/config` if port 22 is also blocked:
+
+```
+Host github.com
+    Hostname ssh.github.com
+    Port 443
+    User git
+```
+
+With both in place, `git ls-remote https://github.com/Yzm889/TianZheng-ai-plugin.git`
+succeeds and `dshpub` can fetch the repository.
 
 
 ## End-to-end example (27 instructions, all measured)
