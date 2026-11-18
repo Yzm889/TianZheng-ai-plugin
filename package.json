@@ -1,7 +1,7 @@
 {
   "name": "dsh-t20-arch",
-  "version": "0.10.1",
-  "description": "T20/T30 天正建筑 (Tianzheng Architecture) connector for DeepSeek Harness via MCP — creates real Tianzheng objects (walls, doors, windows, columns, stairs, balconies, axis grids) by driving a running AutoCAD+Tianzheng instance.",
+  "version": "0.10.2",
+  "description": "T20/T30 澶╂寤虹瓚 (Tianzheng Architecture) connector for DeepSeek Harness via MCP 鈥?creates real Tianzheng objects (walls, doors, windows, columns, stairs, balconies, axis grids) by driving a running AutoCAD+Tianzheng instance.",
   "type": "module",
   "main": "lib/index.js",
   "exports": {

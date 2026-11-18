@@ -18,6 +18,28 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
   generated at runtime and should not ship. Tarball dropped from 438 kB to 180 kB
   (43 files instead of 76).
 
+## [0.10.2] - 2026-11-19
+
+### Fixed
+
+首次 npm 安装体验的六个缺陷，全部实测确认：
+
+- `requirements.txt` 之前形同虚设（`run.ps1` 里硬编码了 `pywin32 mcp`）。
+  现在以 `requirements.txt` 为唯一来源，版本约束才真正生效。
+- `pip install` 没有超时，网络断开会无限挂起，用户只看到"卡住"。
+  现在带 `--timeout 60 --retries 2 --no-input`。
+- 国内安装 `pywin32`/`mcp` 慢且可能失败。现在三级源回退：
+  官方 PyPI → 清华镜像 → 阿里云镜像。
+- `python -m venv` 失败（例如缺 ensurepip）没有降级路径。
+  现在会用 `--without-pip` 再建一次并执行 `ensurepip`。
+- 失败提示是英文且不给动作。现在 `Fail()` 输出编号的可执行步骤
+  （装 Python、换镜像、设 `T20_ARCH_PYTHON`、去哪看日志）。
+- 日志不记录 Python 版本，报障难定位。现在记录版本并写 `deps.ok`
+  （含解释器路径、版本、解析时间）。
+
+`lib/index.js` 现在同时校验 `bin/launch.cmd` 与 `bin/run.ps1`；
+之前只查前者，缺 `run.ps1` 要等到第一次启动才暴露。
+
 ## [Unreleased]
 
 ### Added
