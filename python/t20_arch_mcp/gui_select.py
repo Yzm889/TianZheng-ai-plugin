@@ -169,21 +169,32 @@ def _plan_impl(spec: dict[str, Any]) -> dict[str, Any]:
 
 
 def _count_impl(spec: dict[str, Any]) -> dict[str, Any]:
-    from . import tianzheng_query
+    """数实体总量 / 某类实体数量。
 
+    这里坚持"自己遍历 ObjectName"，不走 `tianzheng_query.count_entities`：后者在
+    个别天正实体上会卡住整个 COM 调用（实测一次 TCH_WALL 直接超时 25 s，把随后的
+    调用全堵死）。读名字是最便宜的属性，读不到就跳过。
+    """
     doc = acad_conn._active_document()
     total = 0
+    msp = None
     try:
-        total = int(doc.ModelSpace.Count)
+        msp = doc.ModelSpace
+        total = int(msp.Count)
     except Exception:  # noqa: BLE001
         total = 0
     out: dict[str, Any] = {"total": total}
-    kind = spec.get("kind") or ""
-    if kind:
-        try:
-            out["typed"] = int(tianzheng_query.count_entities(kind).get("count", 0))
-        except Exception:  # noqa: BLE001
-            out["typed"] = None
+    kind = str(spec.get("kind") or "")
+    if kind and msp is not None:
+        n = 0
+        for i in range(total):
+            try:
+                name = str(msp.Item(i).ObjectName)
+            except Exception:  # noqa: BLE001
+                continue
+            if kind.upper() in name.upper():
+                n += 1
+        out["typed"] = n
     return out
 
 
@@ -195,7 +206,7 @@ def _send_command_impl(command: str) -> dict[str, Any]:
     实测踩过：TDimRad 发出后 120 s 超时，CAD 停在"选择对象"。
     这类命令要用键盘输入（`_type_command`），让 AutoCAD 自己进入提示状态。
     """
-    doc = _active_document()
+    doc = acad_conn._active_document()
     doc.SendCommand(command.rstrip("\n") + "\n")
     return {"ok": True, "sent": command}
 
@@ -217,6 +228,130 @@ def _pickfirst_impl(_spec: dict[str, Any]) -> dict[str, Any]:
     except Exception as exc:  # noqa: BLE001
         return {"ok": False, "error": f"读不到 PickfirstSelectionSet：{exc}"}
     return {"ok": True, "count": count, "handles": handles}
+
+
+def _read_pickfirst_retry(attempts: int = 6, delay: float = 0.3) -> dict[str, Any]:
+    """读当前预选集合，容忍 AutoCAD 短暂拒收。
+
+    实测：点在空白处时 AutoCAD 进入「指定对角点」窗口选择，COM 会被拒到按 ESC 为止；
+    所以这里多试几次，读不到就交给调用方 ESC 掉这一轮。
+    """
+    last = ""
+    for _ in range(attempts):
+        try:
+            return acad_conn._com(_pickfirst_impl, {}, timeout=12)
+        except Exception as exc:  # noqa: BLE001
+            last = str(exc)
+            time.sleep(delay)
+    return {"ok": False, "error": f"读不到 PickfirstSelectionSet：{last}"}
+
+
+def screen_view_ok(state: dict[str, Any] | None, px: int, py: int) -> bool:
+    if not state:
+        return True
+    try:
+        return bool(screen_map.inside_view(state, (px, py)))
+    except Exception:  # noqa: BLE001
+        return True
+
+
+def _view_state_impl(spec: dict[str, Any]) -> dict[str, Any]:
+    doc = acad_conn._active_document()
+    state = screen_map.view_state_for_doc(doc, int(spec["hwnd"]))
+    return {"ok": bool(state), "state": state}
+
+
+def _state_now(hwnd: int) -> dict[str, Any] | None:
+    got = acad_conn._com(_view_state_impl, {"hwnd": int(hwnd)}, timeout=60)
+    return got.get("state") if got.get("ok") else None
+
+
+def _candidates_impl(spec: dict[str, Any]) -> dict[str, Any]:
+    """给一个对象的包围盒，算出"从中心往外"的一串候选点（世界+屏幕）。
+
+    天正房间(TDBSPACE)唯一的几何信息就是包围盒：房间名和面积文字落在哪儿不知道，
+    框选又选不中（实测窗口选择对这些自定义对象无效）。所以只能试：先点中心，
+    不行就按环形网格往外挪，直到某一个点真的选中了它。
+    """
+    doc = acad_conn._active_document()
+    state = screen_map.view_state_for_doc(doc, int(spec["hwnd"]))
+    if not state:
+        return {"ok": False, "error": "读不到视图变换（先 ZOOM 全图）"}
+    found = _lookup([spec["handle"]])
+    ent = found.get(str(spec["handle"]).upper())
+    if ent is None:
+        return {"ok": False, "error": "模型空间里没有这个句柄"}
+    geom = _geometry_of(ent)
+    box = geom.get("bbox")
+    if not box:
+        return {"ok": False, "error": "这个对象没有包围盒"}
+    lo, hi = box
+    w, h = float(hi[0]) - float(lo[0]), float(hi[1]) - float(lo[1])
+    grid = int(spec.get("grid") or 5)
+    fractions = [(0.5, 0.5)]
+    for ring in range(1, grid):
+        step = 1.0 / (grid + 1)
+        for i in range(grid + 2):
+            for j in range(grid + 2):
+                fx, fy = i * step, j * step
+                if 0.05 < fx < 0.95 and 0.05 < fy < 0.95:
+                    dist = ((fx - 0.5) ** 2 + (fy - 0.5) ** 2) ** 0.5
+                    fractions.append((round(fx, 3), round(fy, 3)))
+        fractions = [fractions[0]] + sorted(
+            {f for f in fractions[1:]},
+            key=lambda f: ((f[0] - 0.5) ** 2 + (f[1] - 0.5) ** 2) ** 0.5)
+        break
+    out: list[dict[str, Any]] = []
+    seen: set[tuple[int, int]] = set()
+    for fx, fy in fractions:
+        wx = float(lo[0]) + w * fx
+        wy = float(lo[1]) + h * fy
+        screen = tuple(screen_map.world_to_screen(state, wx, wy))
+        if screen in seen:
+            continue
+        seen.add(screen)
+        out.append({"world": [wx, wy], "screen": list(screen)})
+    return {"ok": True, "kind": geom.get("kind"), "bbox": box, "candidates": out}
+
+
+def probe_pick(handle: str, grid: int = 5, settle: float = 0.3) -> dict[str, Any]:
+    """试出一张"点到就能选中这个对象"的屏幕点。
+
+    做法：逐个候选点真点一下，读 `PickfirstSelectionSet`；选中了就记下来并 ESC 清空。
+    因为每个对象只要一个点，结果由调用方缓存，别每次命令都重算。
+    """
+    if not gui_enabled():
+        raise acad_conn.AcadError(
+            f"宿主没有桌面控制能力（{GUI_ENV} 未开启）。这条命令需要真实鼠标点选。")
+    app = acad_conn._attach_app()
+    hwnd = _hwnd_of(app)
+    plan = acad_conn._com(_candidates_impl,
+                          {"hwnd": hwnd, "handle": str(handle), "grid": int(grid)},
+                          timeout=90)
+    if not plan.get("ok"):
+        return {"ok": False, "handle": handle, "error": plan.get("error")}
+
+    sendinput.ensure_focus(hwnd)
+    sendinput.focus_drawing_view(hwnd)
+    time.sleep(settle)
+    state = _state_now(hwnd)
+    tried: list[dict[str, Any]] = []
+    for candidate in plan["candidates"]:
+        px, py = candidate["screen"]
+        if state and not screen_view_ok(state, px, py):
+            continue
+        sendinput.click(int(px), int(py), settle=settle)
+        sel = _read_pickfirst_retry()
+        hit = str(handle).upper() in [str(h).upper() for h in (sel.get("handles") or [])]
+        tried.append({"screen": candidate["screen"], "world": candidate["world"],
+                      "hit": hit, "count": sel.get("count"),
+                      "handles": sel.get("handles")})
+        sendinput.send_escape(2, settle=0.18)
+        if hit:
+            return {"ok": True, "handle": handle, "kind": plan.get("kind"),
+                    "point": candidate, "tries": len(tried), "attempts": tried}
+    return {"ok": False, "handle": handle, "error": "所有候选点都没点中",
+            "tries": None, "attempts": tried}
 
 
 # --------------------------------------------------------------------------- #

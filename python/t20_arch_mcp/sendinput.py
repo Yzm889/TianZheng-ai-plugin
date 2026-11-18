@@ -125,10 +125,29 @@ def ensure_focus(hwnd: int, attempts: int = 3, settle: float = 0.35) -> bool:
         time.sleep(settle)
         try:
             if user32.GetForegroundWindow() == hwnd:
+                global _TARGET_HWND
+                _TARGET_HWND = int(hwnd)
                 return True
         except Exception:
             pass
     return False
+
+
+# 记住"这一批操作要发给哪个窗口"。桌面助手类前台（聊天窗口、浏览器）随时可能
+# 抢走焦点，实测每一次点击都可能在别人的窗口上落地，所以每次输入前都要复核。
+_TARGET_HWND: int | None = None
+
+
+def guard_foreground() -> bool:
+    """输入前复核前台窗口；被抢走就再抢回来。没有设定目标窗口时不做任何事。"""
+    if not _TARGET_HWND:
+        return True
+    try:
+        if user32.GetForegroundWindow() == _TARGET_HWND:
+            return True
+    except Exception:
+        return True
+    return ensure_focus(_TARGET_HWND, attempts=2, settle=0.15)
 
 
 def _send(inputs: list[_INPUT]) -> int:
@@ -145,6 +164,7 @@ def _key_input(vk: int, up: bool) -> _INPUT:
 
 
 def press_key(vk: int, settle: float = 0.06) -> None:
+    guard_foreground()
     _send([_key_input(vk, False)])
     time.sleep(0.02)
     _send([_key_input(vk, True)])
@@ -153,6 +173,7 @@ def press_key(vk: int, settle: float = 0.06) -> None:
 
 def type_unicode(text: str, settle: float = 0.02) -> None:
     """Type arbitrary text as unicode (works for letters, digits, symbols)."""
+    guard_foreground()
     for ch in text:
         item = _INPUT()
         item.type = INPUT_KEYBOARD
@@ -177,7 +198,14 @@ def screen_size() -> tuple[int, int]:
 
 
 def click(x: int, y: int, settle: float = 0.15) -> None:
-    """Absolute click at screen coordinates."""
+    """Absolute click at screen coordinates.
+
+    MEASURED: the move must land before the button goes down. With only 30 ms
+    between the move and the press, AutoCAD's crosshair is still at the old
+    position when the press arrives, so it reads press@old + release@new as a
+    window drag — every "pick" turned into 「指定对角点」 and the command never
+    got a selection. Two move packets plus a longer pause make it a real click.
+    """
     def _move():
         item = _INPUT()
         item.type = INPUT_MOUSE
@@ -185,6 +213,7 @@ def click(x: int, y: int, settle: float = 0.15) -> None:
         return item
 
     # Absolute coordinates require normalising to 0..65535.
+    guard_foreground()
     w, h = screen_size()
     nx = int(x * 65535 / max(w - 1, 1))
     ny = int(y * 65535 / max(h - 1, 1))
@@ -198,9 +227,12 @@ def click(x: int, y: int, settle: float = 0.15) -> None:
     up.type = INPUT_MOUSE
     up.mi = _MOUSEINPUT(0, 0, 0, MOUSEEVENTF_LEFTUP, 0, None)
     _send([move])
-    time.sleep(0.03)
+    time.sleep(0.10)
+    # Nudge once more so the crosshair is definitely redrawn at the target.
+    _send([move])
+    time.sleep(0.10)
     _send([down])
-    time.sleep(0.03)
+    time.sleep(0.06)
     _send([up])
     time.sleep(settle)
 

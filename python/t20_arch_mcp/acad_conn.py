@@ -73,6 +73,7 @@ class _ComWorker:
     def __init__(self) -> None:
         self._q: "queue.Queue[Any]" = queue.Queue()
         self._ready = threading.Event()
+        self.poisoned = False
         self._thread = threading.Thread(
             target=self._loop, name="t20-acad-com", daemon=True
         )
@@ -99,13 +100,19 @@ class _ComWorker:
             finally:
                 done.set()
 
-    def call(self, fn: Callable[..., Any], *args: Any, timeout: float = 120.0, **kwargs: Any) -> Any:
+    def call(self, fn: Callable[..., Any], *args: Any, timeout: float = 120.0,
+             poison_on_timeout: bool = True, **kwargs: Any) -> Any:
         if self._thread is None or not self._thread.is_alive():
             raise AcadError("COM worker thread is not running.")
         done = threading.Event()
         box: dict[str, Any] = {}
         self._q.put((fn, args, kwargs, done, box))
         if not done.wait(timeout):
+            # 超时多半是"命令还在等输入"，短暂探活（transient）就当一次"忙"处理，
+            # 不能判废——判废会换新线程，而旧线程还卡在 AutoCAD 里，新连接会一起堵住。
+            # 只有真·长调用超时（命令可能永远不返回）才换线程。
+            if poison_on_timeout:
+                self.poisoned = True
             raise AcadError(
                 f"AutoCAD COM call timed out after {timeout:.0f}s. "
                 "AutoCAD is probably waiting for user input (a modal dialog or a "
@@ -120,7 +127,8 @@ _worker: _ComWorker | None = None
 _worker_lock = threading.Lock()
 
 
-def _com(fn: Callable[..., Any], *args: Any, timeout: float = 120.0, **kwargs: Any) -> Any:
+def _com(fn: Callable[..., Any], *args: Any, timeout: float = 120.0,
+         transient: bool = False, **kwargs: Any) -> Any:
     global _worker
     if _COM_IMPORT_ERROR is not None:
         raise AcadError(
@@ -129,9 +137,18 @@ def _com(fn: Callable[..., Any], *args: Any, timeout: float = 120.0, **kwargs: A
             "pywin32 installed (e.g. Python 3.13 on this machine)."
         )
     with _worker_lock:
-        if _worker is None:
+        if _worker is None or _worker.poisoned or not _worker._thread.is_alive():
             _worker = _ComWorker()
-    return _worker.call(fn, *args, timeout=timeout, **kwargs)
+        worker = _worker
+    return worker.call(fn, *args, timeout=timeout,
+                       poison_on_timeout=not transient, **kwargs)
+
+
+def reset_com_worker() -> None:
+    """扔掉可能卡死的 COM 线程，下一调用会在新线程里重建连接。"""
+    global _worker
+    with _worker_lock:
+        _worker = None
 
 
 # --------------------------------------------------------------------------- #
