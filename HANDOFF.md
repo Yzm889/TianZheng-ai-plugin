@@ -85,7 +85,7 @@ python/t20_arch_mcp/
 ├── nl_catalog.py        ★ 53 条指令的规格表（改这里就加指令）
 ├── nl_parser.py            自然语言 → 意图解析
 ├── nl_dispatch.py          意图 → 实际调用 + 结果摘要
-├── server.py               MCP 服务入口，28 个工具
+├── server.py               MCP 服务入口，29 个工具（开 T20_HOST_GUI=1 后 31 个）
 ├── sendinput.py            SendInput 键鼠模拟、焦点管理
 ├── winmsg.py               窗口消息、命令行文本读取
 ├── dialog.py               天正式 #32770 对话框的枚举与按钮点击
@@ -95,6 +95,7 @@ python/t20_arch_mcp/
 ├── opening_assist.py    ★ 门窗位置提示（见 §5）
 ├── opening_library.py   ★ 门窗模板宽度登记表（宽度读不出来，只能登记，见 §5.1）
 ├── plot_export.py       ★ PDF 导出（COM 异步打印，见 §5.2）
+├── gui_select.py        ★ 选择类命令的鼠标点选（见 §5.3，需 T20_HOST_GUI=1）
 ├── prereq_check.py         开工前需求预检
 ├── template_request.py     缺模板时给用户的组件规格说明
 ├── tianzheng_query.py      实体统计、类型直方图
@@ -275,6 +276,37 @@ B. 要 1500 宽，模板只有 1000 -> 拒绝动手，TDbOpening 停在 5
 实测（`Drawing31.dwg` 副本）：58 662 字节、`%PDF-`、等待 22 s，样例
 `docs/示例-Drawing31平面图.pdf`。复现 `repro/pdf_export_check.py <dwg> <out.pdf>`。
 
+### 5.3 选择类命令：GUI 层（需 T20_HOST_GUI=1）
+
+「半径标注 / 面积统计 / 填充面积 / 房间排序 / 墙体分段」这类命令第一步都是
+**选择对象**，COM 替不了（`SelectOnScreen` 也是交互的）。有桌面控制的宿主可以：
+
+```
+句柄 → 屏幕坐标（screen_map.world_to_screen）→ 真点 → 回车 →（可选）点定位点 → 核对增量
+```
+
+实测证据（`Drawing31.dwg` 副本）：
+
+```
+A. click_targets 点 2 个房间 -> PickfirstSelectionSet {4CF, 4D0}（2/2 命中）
+B. TDimRad: 点圆 5D0 -> 回车接受"是否为该对象[Y]" -> 点 4100,4050
+   模型空间 56 -> 57，直方图新增 CIRCLE 1 + TDBRADIUSDIM 1
+```
+
+三个必须记住的点：
+
+- **`Document.SendCommand` 不能用在这里**：它是同步的，命令挂着等鼠标时调用会一直阻塞
+  （实测 TDimRad 发出后 120 s 超时）。要改用键盘输入（`_type_command`）；
+- **点选点不能取包围盒中心**：墙是双线，中心在空隙里；门的包围盒含开启弧。线段取中点、
+  圆/弧取圆周上的点；
+- **不是所有"选择类"都是纯选择**：`TTextAddFrame` 会弹模态对话框，点完会把 CAD 卡在
+  `#32770` 对话框上（要真 ESC 才能解），所以只收录实测过的命令。
+
+能力门控：默认不注册 `gui_click_targets` / `gui_select_command`；`T20_HOST_GUI=1` 才暴露。
+给没有 GUI 的宿主的统一提示写在 `capability_report` 里（也写进了 MCP `instructions`）：
+**想要更顺的操作、并用到这些功能，建议换用具备图形界面控制能力的 AI 工具（如豆包 PC 客户端）
+来驱动本插件。**
+
 ---
 
 ## 6. 坑清单（按重要性排序）
@@ -299,6 +331,8 @@ B. 要 1500 宽，模板只有 1000 -> 拒绝动手，TDbOpening 停在 5
 | 16 | 直方图的 key 是**归一后**的类名（`TDBAXISLABELSET`），拿 `TCH_AXIS_LABEL` 去查永远得 0 | 计数一律走 `count_entities()`（带别名匹配），直方图只用来读原始类名 |
 | 17 | 门窗宽度**读不出来**（XData 空、无 Width 属性、包围盒混高度），`ScaleEntity` 只改高度 | 用 `register_opening_template` 登记宽度，`build_plan` 按登记值匹配；读不到就报错，不许猜 |
 | 18 | `PlotToFile` 返回 ≠ 文件写好（异步，约 20 s），`IAcadPlot` 也没有 `PlotConfigurations` | 绘图仪设在 `ActiveLayout.ConfigName`（默认「无」= 静默失败）；套 `monochrome.ctb`；轮询到大小稳定才算成功 |
+| 19 | 给"选择类"命令用 `Document.SendCommand` 会死等鼠标（实测 120 s 超时） | 改用键盘输入命令（`gui_select._type_command`），再自己点、自己回车 |
+| 20 | `TTextAddFrame` 等命令会弹模态对话框，点选后 CAD 卡在 `#32770` | 只收录实测过的纯选择类命令；卡住先真 ESC / 关窗再继续 |
 
 ---
 
@@ -346,6 +380,7 @@ python -m pytest tests -q
 - `test_scene_build_openings.py` — 宽度路由：命中才克隆、缺宽度先要模板、没给
   宽度必须标 `width_unverified`
 - `test_plot_export.py` — 选绘图仪的优先级、`PlotToFile` 异步等待、0 字节不算成功
+- `test_gui_select.py` — 能力门控、点选点算法（线段中点/圆周/别用包围盒中心）、视图判定
 
 **测试里有一些"原则守护"用例**，例如：
 ```python
@@ -377,8 +412,8 @@ for bad in ("安装目录", "图库", "搜索"):
 ### 已完成
 
 ```
-53 条指令 · 28 个 MCP 工具 · 74 passed / 74 subtests
-本地领先远端 3 个提交 · 工作区 clean
+53 条指令 · 29 个 MCP 工具（GUI 档 31 个）· 83 passed / 74 subtests
+本地领先远端 4 个提交 · 工作区 clean
 ```
 
 ### 已完成并实测：F5（`build_plan` 内部的轴网标注）
@@ -455,6 +490,17 @@ config DWG To PDF.pc3 · extents · monochrome.ctb
 
 样例 `docs/示例-Drawing31平面图.pdf`；复现
 `& $py repro\pdf_export_check.py <dwg副本> <out.pdf>`。
+
+### 已完成并实测：GUI 层（选择类命令）
+
+`gui_click_targets` / `gui_select_command`（需 `T20_HOST_GUI=1`，默认不注册）。
+
+```
+A. click_targets -> PickfirstSelectionSet {4CF, 4D0}（2/2 命中）
+B. TDimRad -> 模型空间 56 -> 57，新增 CIRCLE 1 + TDBRADIUSDIM 1
+```
+
+复现 `& $py repro\gui_select_check.py <dwg副本>`。坑见 §5.3 / §6 第 19、20 条。
 
 ### 可以继续做的
 

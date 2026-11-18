@@ -552,6 +552,8 @@ dsh-t20-arch/
 | Every COM call rejected | Command pending or dialog open | Press ESC in AutoCAD; the plugin does this automatically |
 | `执行失败` + hint mentions 焦点 / focus | AutoCAD is not the foreground window | Click the AutoCAD drawing area, then retry (or set `T20_ALLOW_FOCUS_STEAL=1`) |
 | `PC2T20 选择需要转化的图元` | Tianzheng routed the axis command to its convert branch | Open 天正「绘制轴网」dialog once, confirm the axis data, then retry |
+| Select-type command cannot finish (radius dim, area stats, parking numbers…) | Those need a real pointer; a stdio-only host has none | Call `capability_report`. Selecting objects / filling Tianzheng dialogs needs GUI control, so an AI tool **with desktop control** (e.g. the Doubao desktop app) drives this plugin more comfortably and unlocks that tier |
+| `gui_select_command` says the target is outside the view | Clicks are screen coordinates and must land inside the drawing pane | `ZOOM` extents first (or zoom out), then retry |
 
 ---
 
@@ -696,6 +698,45 @@ reports size plus the `%PDF-` magic; a 0-byte file is an error, never success.
 Measured on a copy of `Drawing31.dwg`: `Model` layout, `DWG To PDF.pc3`,
 extents, `monochrome.ctb` -> 58 662 bytes, first bytes `%PDF-`, 22 s wait.
 Sample output: `docs/示例-Drawing31平面图.pdf`.
+
+### 36. GUI tier: the commands that need a real pointer
+
+A whole class of Tianzheng commands starts with "select objects" and cannot be
+completed over COM (`SelectOnScreen` is interactive too). Seven of them were
+listed as impossible: radius/diameter dimensions, area statistics, hatch area,
+text frames, parking numbers, room sorting, wall splitting.
+
+They stop being impossible when the host has desktop control. `gui_select.py`
+turns a handle into a screen point, really clicks, presses Enter, optionally
+clicks a second "label position", and then checks the entity delta:
+
+```
+TDimRad on a fresh circle:
+  click circle 5D0 -> Enter (accepts 是否为该对象[Y]) -> click 4100,4050
+  model space 56 -> 57 · histogram gains CIRCLE 1 + TDBRADIUSDIM 1
+```
+
+Click accuracy is verified separately: `click_targets()` reads back
+`PickfirstSelectionSet`, so a wrong click shows up as the wrong handle instead of
+as a mystery failure deep inside a command.
+
+Three traps, all measured:
+
+* **`Document.SendCommand` must not be used here.** It is synchronous: the call
+  blocks until the command finishes, and a command waiting for a mouse pick never
+  finishes -- the send timed out after 120 s with AutoCAD stuck at
+  `请选择对象`. Type the command with the keyboard instead, then do the clicking;
+* **the pick point cannot be the bounding-box centre.** Walls are double lines
+  drawn between the two lines (AutoCAD calls it empty space), and a door's bbox
+  includes its swing arc. Lines take their midpoint, circles/arcs a point on the
+  circumference;
+* **not every "selection" command is selection-only.** `TTextAddFrame` opens a
+  modal dialog, so clicking around it leaves AutoCAD blocked on `#32770`
+  (needs a real ESC to recover). Only use commands you have actually measured.
+
+Capability gating (`T20_HOST_GUI=1`) keeps this honest for hosts without a
+pointer: `capability_report` then explains what is unavailable and suggests
+switching to an AI tool with GUI control.
 
 ### 29. DXF export as the plotter-free fallback
 

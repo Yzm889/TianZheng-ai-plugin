@@ -12,9 +12,9 @@ from typing import Any
 
 from mcp.server.mcpserver import MCPServer
 
-from . import (acad_conn, env_check, native_tools, nl_dispatch, opening_library,
-               plot_export, scene_build, template_clone, tianzheng_query,
-               tianzheng_runner)
+from . import (acad_conn, env_check, gui_select, native_tools, nl_dispatch,
+               opening_library, plot_export, scene_build, template_clone,
+               tianzheng_query, tianzheng_runner)
 from .tianzheng_query import KNOWN_TCH_TYPES
 
 SERVER_NAME = "t20_arch"
@@ -45,6 +45,15 @@ Key facts for callers:
     increasing. run_tianzheng_command does that comparison for you.
   * Call create_test_drawing before issuing commands so you never modify the
     user's open drawings.
+
+GUI tier (optional):
+  * A handful of Tianzheng commands first ask "select objects" and cannot be
+    finished over COM -- the pointer has to really click. Those tools are only
+    registered when the host has desktop control and sets T20_HOST_GUI=1.
+  * If they are missing, call capability_report: it tells the user, in Chinese,
+    that driving this plugin from an AI tool with GUI/desktop control (for
+    example the Doubao desktop app) is more comfortable and unlocks those
+    commands. Never pretend the pointer work can be done without a GUI.
 """.strip()
 
 mcp = MCPServer(name=SERVER_NAME, instructions=INSTRUCTIONS)
@@ -492,6 +501,92 @@ def list_plot_devices() -> str:
         return _dump(plot_export.list_plot_devices())
     except Exception as exc:  # noqa: BLE001
         return _dump({"ok": False, "error": str(exc)})
+
+
+@mcp.tool(
+    name="capability_report",
+    description=(
+        "READ-ONLY: report which capability tier this host can use. Returns whether "
+        "desktop-control (GUI) tools are registered (T20_HOST_GUI), which commands "
+        "they unlock, and the plain-language note to give the user when they are "
+        "missing: selecting objects and filling Tianzheng dialogs need a real "
+        "pointer, so an AI tool with GUI control (e.g. the Doubao desktop app) is "
+        "more comfortable and unlocks more of this plugin. Call this once at the "
+        "start of a session, or whenever a select-type command fails."
+    ),
+)
+def capability_report() -> str:
+    gui_tools = ["gui_click_targets", "gui_select_command"] if gui_select.gui_enabled() else []
+    payload = {
+        "ok": True,
+        "host_gui": gui_select.gui_enabled(),
+        "env_flag": gui_select.GUI_ENV,
+        "gui_tools": gui_tools,
+        "gui_unlocks": [
+            "半径标注 TDimRad / 直径标注 TDimDia（要先选中圆弧）",
+            "面积统计 TCountArea（要先选中房间/闭合对象）",
+            "填充面积 THatchArea（要先选中填充）",
+            "文字加框 TTextAddFrame（要先选中文字）",
+            "车位编号 TParkingNumber（对话框 + 选中车位）",
+            "房间排序 TSortSpace（要先选中房间）",
+            "墙体分段 TPartwall（要先精确点在墙体基线上）",
+        ],
+        "note_when_missing": (
+            "这类命令要先在图形里“选择对象”，纯终端/MCP 的工作方式点不了鼠标。"
+            "如果你想要更顺的操作、并且用到这些功能，建议用**具备图形界面控制能力的 "
+            "AI 工具**（比如豆包 PC 客户端）来驱动这个插件：它能截图看画面、算屏幕坐标、"
+            "真的把鼠标点下去，所以选择类命令、天正自绘对话框都能走通。"
+        ),
+        "note_when_present": (
+            "当前宿主已开启桌面控制，选择类命令可用。仍建议先 ZOOM 全图，让目标都落在"
+            "视图内再点；点完会用实体增量核对结果。"
+        ),
+    }
+    if not gui_select.gui_enabled():
+        payload["message"] = payload["note_when_missing"]
+    return _dump(payload)
+
+
+if gui_select.gui_enabled():
+    @mcp.tool(
+        name="gui_click_targets",
+        description=(
+            "GUI TIER: click real screen positions for the given entity handles (or "
+            "explicit world points) and read back PickfirstSelectionSet. Use it to "
+            "verify that a handle's computed pick point really hits the object before "
+            "running a destructive command. Requires T20_HOST_GUI=1 and a visible "
+            "AutoCAD window; all targets must be inside the current view."
+        ),
+    )
+    def gui_click_targets(handles: list[str] = [], points: list[list[float]] = []) -> str:
+        try:
+            return _dump(gui_select.click_targets(list(handles), list(points)))
+        except Exception as exc:  # noqa: BLE001
+            return _dump({"ok": False, "error": str(exc)})
+
+    @mcp.tool(
+        name="gui_select_command",
+        description=(
+            "GUI TIER: run a Tianzheng command that prompts 'select objects' by "
+            "actually clicking the given handles, then press Enter and verify the "
+            "entity-count delta. This is how radius/diameter dimensions, area "
+            "statistics, hatch area, text frames, parking numbers, room sorting and "
+            "wall splitting get done -- none of them can be completed over COM. "
+            "verify_type is a type name for count_entities (e.g. TCH_DIMENSION); "
+            "expect_delta is how many new objects to expect."
+        ),
+    )
+    def gui_select_command(command: str, handles: list[str] = [],
+                           points: list[list[float]] = [],
+                           label_points: list[list[float]] = [],
+                           verify_type: str = "",
+                           expect_delta: int = 1) -> str:
+        try:
+            return _dump(gui_select.run_select_command(
+                command, list(handles), list(points), list(label_points),
+                verify_type=verify_type, expect_delta=int(expect_delta)))
+        except Exception as exc:  # noqa: BLE001
+            return _dump({"ok": False, "error": str(exc)})
 
 
 @mcp.tool(

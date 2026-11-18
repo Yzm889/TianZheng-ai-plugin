@@ -8,6 +8,27 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Added
 
+- **GUI 层：需要真实鼠标点选的命令（`gui_select`）** — 一类命令以「选择对象」开头，
+  COM 无法替它完成点选（`SelectOnScreen` 也是交互式的），过去只能返回"请你手点"。
+  现在把它变成：句柄 → 屏幕坐标 → 真点一下 → 回车 →（可选）点定位点 → 核对实体增量。
+  - `gui_click_targets`：只点选并回读 `PickfirstSelectionSet`，先验证"点得准不准"；
+  - `gui_select_command`：直接跑命令（半径/直径标注、面积统计、填充面积、房间排序、
+    墙体分段等），支持第二步的 `label_points`；
+  - 能力门控：默认不注册，只有 `T20_HOST_GUI=1` 才暴露（工具数 29 → 31）；
+  - 新增 `capability_report`：告诉调用方当前是哪一档能力，并给出给用户看的说明。
+  
+  实测（`Drawing31.dwg` 副本）：
+  ```
+  A. 点 2 个房间 -> PickfirstSelectionSet = {4CF, 4D0}（两个都命中）
+  B. TDimRad：点圆 5D0 -> 回车接受"是否为该对象[Y]" -> 点 4100,4050
+     模型空间 56 -> 57，直方图新增 CIRCLE 1 + TDBRADIUSDIM 1
+  ```
+- 11 条新单测 `tests/test_gui_select.py`（能力门控、点选点算法、视图判定）。
+- 复现脚本 `repro/gui_select_check.py <dwg副本>`。
+- **给用 DSH 的用户一句提示**（写进 MCP `instructions` + `capability_report` +
+  README 故障表）：选择类命令和天正自绘对话框需要真鼠标，纯终端宿主点不了；
+  想要更顺的操作、并用到这些功能，建议用**具备图形界面控制能力的 AI 工具**
+  （如豆包 PC 客户端）来驱动本插件。
 - **`export_pdf` / `list_plot_devices`（PDF 导出解禁）** — 之前记为「机器上没有
   `.pc3`，PDF 不可能」，实测证明是两条误判：
   - `.pc3` 目录确实存在（`%APPDATA%\Autodesk\AutoCAD 2022\R24.1\chs\Plotters\`
@@ -66,7 +87,7 @@ this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 
 ### Verification status
 
-单元测试 `74 passed / 74 subtests`。
+单元测试 `83 passed / 74 subtests`。
 
 **轴网标注（F5）** 真实图纸实测通过（2026-11-18，`Drawing1.dwg`，8 条 DOTE 轴线）：
 
@@ -104,6 +125,15 @@ config DWG To PDF.pc3 · plot_type extents · plot_style monochrome.ctb
 ```
 
 复现脚本 `repro/pdf_export_check.py <dwg副本> <out.pdf>`。
+
+**GUI 点选** 实测通过（2026-11-18，`Drawing31.dwg` 副本）：
+
+```
+A. click_targets -> PickfirstSelectionSet {4CF, 4D0}（2/2 命中）
+B. TDimRad -> 模型空间 56 -> 57，新增 CIRCLE 1 + TDBRADIUSDIM 1
+```
+
+复现脚本 `repro/gui_select_check.py <dwg副本>`。
 
 ## [0.7.0] — 2026-11-17
 
