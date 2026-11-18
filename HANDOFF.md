@@ -674,6 +674,30 @@ AcDbText 1 / TDbAxisLabelSet 1`。
 
 ---
 
+## 13. 这台机器的 Git 推送（2026-11-18 定，别再踩）
+
+`github.com:443` 直连会被重置：
+
+```
+fatal: unable to access 'https://github.com/...': Recv failure: Connection was reset
+Test-NetConnection github.com 443      → False
+Test-NetConnection ssh.github.com 443  → True    ← 唯一通的路径
+```
+
+**解法是 SSH-over-443**，不是代理（本机没有代理进程，`127.0.0.1:7877` 只是 IE 设置里的历史残留）：
+
+- `~/.ssh/config` 的 `Host github.com` 已加 `Hostname ssh.github.com`、`Port 443`、`User git`
+  （原文件备份为 `~/.ssh/config.bak-20261118`）
+- remote 已从 https 换成 `git@github.com:Yzm889/TianZheng-ai-plugin.git`
+
+验证：`ssh -T git@github.com` → `Hi Yzm889! You've successfully authenticated`；
+`git push` → `Everything up-to-date`。
+
+所以我这边和 DSH 那边都是**直接 `git push`** 就行，不需要额外通道。注意 key 路径在
+`core.sshCommand` 里必须写成正斜杠（`C:/Users/19891/.ssh/...`），反斜杠会被 git 吃掉。
+
+---
+
 ## 附：关键常量
 
 ```python
